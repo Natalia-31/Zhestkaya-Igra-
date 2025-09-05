@@ -6,15 +6,17 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
+
 from config import BOT_TOKEN, ADMIN_IDS
-import game_handlers  # импортируем модуль
+import game_handlers  # <--- ПРАВИЛЬНЫЙ импорт
 from admin_handlers import register_admin_handlers
-from database.models import init_db
+from database_models import init_db  # если ты перенесла файл, проверь имя
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO, 
-                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
 
 async def set_bot_commands(bot: Bot):
     """Устанавливает команды бота"""
@@ -28,6 +30,7 @@ async def set_bot_commands(bot: Bot):
     ]
     await bot.set_my_commands(commands)
 
+
 async def main():
     """Главная функция запуска бота"""
     # Инициализация базы данных
@@ -38,7 +41,7 @@ async def main():
     dp = Dispatcher()
 
     # Регистрация хендлеров
-    game_handlers.register_game_handlers(dp)  # <--- исправили здесь
+    game_handlers.register_game_handlers(dp)  # <--- ПРАВИЛЬНЫЙ вызов
     register_admin_handlers(dp)
 
     # Установка команд
@@ -51,6 +54,7 @@ async def main():
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
