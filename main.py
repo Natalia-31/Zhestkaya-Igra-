@@ -23,7 +23,7 @@ async def set_bot_commands(bot: Bot):
     await bot.set_my_commands(commands)
 
 async def main():
-    await init_db()
+    init_db()
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
     register_game_handlers(dp)
