@@ -3,8 +3,8 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 from config import BOT_TOKEN, ADMIN_IDS
-from game_handlers import register_game_handlers
-from admin_handlers import register_admin_handlers
+from handlers.game_handlers import register_game_handlers
+from handlers.admin_handlers import register_admin_handlers
 from database_models import init_db
 
 logging.basicConfig(level=logging.INFO,
@@ -37,4 +37,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
