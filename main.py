@@ -7,7 +7,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 from config import BOT_TOKEN, ADMIN_IDS
-import game_handlers
+import game_handlers  # импортируем модуль
 from admin_handlers import register_admin_handlers
 from database.models import init_db
 
@@ -38,7 +38,7 @@ async def main():
     dp = Dispatcher()
 
     # Регистрация хендлеров
-    register_game_handlers(dp)
+    game_handlers.register_game_handlers(dp)  # <--- исправили здесь
     register_admin_handlers(dp)
 
     # Установка команд
