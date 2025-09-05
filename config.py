@@ -3,14 +3,16 @@
 """
 import os
 from typing import List
+from dotenv import load_dotenv
 
-# Токен бота (получить у @BotFather)
+# Загружаем переменные из .env
+load_dotenv()
+
+# Токен бота
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
-# ID администраторов
-ADMIN_IDS: List[int] = [
-    123456789,  # Замените на ваш Telegram ID
-]
+# ID администраторов (можно указать через запятую: 123456,234567,...)
+ADMIN_IDS: List[int] = list(map(int, os.getenv("ADMIN_IDS", "123456789").split(",")))
 
 # Настройки игры
 GAME_SETTINGS = {
@@ -33,6 +35,6 @@ IMAGE_SETTINGS = {
 
 # Режимы контента
 CONTENT_MODES = {
-    "family_friendly": False,  # Только семейный контент
-    "adult_mode": True,       # Включить 18+ контент
+    "family_friendly": False,
+    "adult_mode": True,
 }
