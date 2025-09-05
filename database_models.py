@@ -8,22 +8,20 @@ SessionLocal = sessionmaker(bind=engine)
 
 Base = declarative_base()
 
-# Пример: модель Игрока
+# Модель игрока
 class Player(Base):
     __tablename__ = "players"
-
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     score = Column(Integer, default=0)
     is_leader = Column(Boolean, default=False)
 
-# Пример: модель Игры
+# Модель игры
 class Game(Base):
     __tablename__ = "games"
-
     id = Column(Integer, primary_key=True, index=True)
     current_round = Column(Integer, default=0)
 
-# Инициализация базы данных
+# Инициализация БД
 def init_db():
     Base.metadata.create_all(bind=engine)
