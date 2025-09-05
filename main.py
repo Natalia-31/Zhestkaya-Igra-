@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 
 from config import BOT_TOKEN, ADMIN_IDS
-import game_handlers  # <--- ПРАВИЛЬНЫЙ импорт
+from game_handlers import register_game_handlers  # ← правильный импорт
 from admin_handlers import register_admin_handlers
 from database_models import init_db  # если ты перенесла файл, проверь имя
 
@@ -33,24 +33,18 @@ async def set_bot_commands(bot: Bot):
 
 async def main():
     """Главная функция запуска бота"""
-    # Инициализация базы данных
     await init_db()
-
-    # Создание бота и диспетчера
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
 
-    # Регистрация хендлеров
-    game_handlers.register_game_handlers(dp)  # <--- ПРАВИЛЬНЫЙ вызов
+    register_game_handlers(dp)      # ← просто так
     register_admin_handlers(dp)
 
-    # Установка команд
     await set_bot_commands(bot)
 
     logger.info("🤖 Бот 'Жесткая Игра' запущен!")
 
     try:
-        # Запуск polling
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
