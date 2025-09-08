@@ -152,4 +152,4 @@ def make_choices_keyboard(answers: List[Answer]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def answers_summary(answers: List[Answ]()_
+def answers_summary(answers: List[Answer]) -> str:
