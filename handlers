@@ -1,6 +1,0 @@
-zhestkaya_igra_bot_COMPLETE/
-├── main.py
-├── handlers/
-│   ├── __init__.py
-│   └── game_handlers.py
-│   └── admin_handlers.py
