@@ -137,10 +137,6 @@ def deal_to_full_hand(game: GameState, user_id: int):
     hand = game.hands.setdefault(user_id, [])
     while len(hand) < HAND_SIZE:
         if not game.deck:
-            # Генерируем новую колоду карт-ответов перед раундом
-            # Эту логику перенесём в старт раунда, здесь можно оставить пусто
-            break
-        if not game.deck:
             break
         hand.append(game.deck.pop())
 
@@ -269,7 +265,6 @@ async def cmd_start_round(message: Message):
     game.round_no += 1
     game.answers.clear()
 
-    # Генерируем ситуацию и новые ответы через OpenAI
     situations = await generate_situations_via_openai()
     game.current_situation = situations[0] if situations else "Не удалось сгенерировать ситуацию."
     game.deck = await generate_cards_via_openai()
@@ -285,7 +280,6 @@ async def cmd_start_round(message: Message):
         parse_mode="HTML"
     )
 
-    # Раздать новые карты каждому игроку (кроме ведущего)
     for uid in game.player_ids:
         if uid != game.current_host_id():
             game.hands[uid] = []
@@ -317,6 +311,8 @@ async def cb_pick_answer(callback: CallbackQuery, bot: Bot):
     game = ensure_game(callback.message.chat.id)
     user = callback.from_user
 
+    print(f"[DEBUG] Игрок {user.id} пытается ответить, фаза: {game.phase}")
+
     if game.phase != "collect":
         await callback.answer("Сейчас не время отвечать.", show_alert=True)
         return
@@ -329,7 +325,6 @@ async def cb_pick_answer(callback: CallbackQuery, bot: Bot):
     if user.id == game.current_host_id():
         await callback.answer("Ведущий не может отвечать.", show_alert=True)
         return
-
     try:
         idx = int(callback.data.split(":")[1])
         hand = game.hands.get(user.id, [])
@@ -412,6 +407,7 @@ async def round_timeout_watchdog(bot: Bot, chat_id: int, delay: int):
     game = GAMES.get(chat_id)
     if not game or game.phase != "collect":
         return
+    game.phase = "choose"
     await bot.send_message(chat_id, "⏰ Время вышло! Показываю, что успели отправить…")
     await show_answers_for_all(bot, chat_id)
 
