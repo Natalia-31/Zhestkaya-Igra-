@@ -18,7 +18,7 @@ import openai
 import os
 
 # =====================  НАСТРОЙКИ  =====================
-MIN_PLAYERS = 1
+MIN_PLAYERS = 2
 HAND_SIZE = 10
 ROUND_TIMEOUT = 40
 
