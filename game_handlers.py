@@ -1,6 +1,5 @@
 from __future__ import annotations
 import asyncio
-import json
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +14,8 @@ from aiogram.types import (
     FSInputFile,
 )
 from PIL import Image, ImageDraw, ImageFont
+import openai
+import os
 
 # =====================  НАСТРОЙКИ  =====================
 MIN_PLAYERS = 1
@@ -27,6 +28,11 @@ except NameError:
     BASE_DIR = Path(".").resolve()
 
 FONT_PATH = BASE_DIR / "arial.ttf"
+
+# Добавьте ваш OpenAI API ключ в переменную окружения OPENAI_API_KEY
+openai.api_key = os.getenv("OPENAI_API_KEY")
+if not openai.api_key:
+    raise RuntimeError("OpenAI API ключ не найден! Установите переменную окружения OPENAI_API_KEY.")
 
 # =====================  РОУТЕР  =====================
 router = Router()
@@ -72,27 +78,28 @@ class GameState:
 # =====================  ГЛОБАЛЬНОЕ СОСТОЯНИЕ  =====================
 GAMES: Dict[int, GameState] = {}
 
-# =====================  БЛОК ГЕНЕРАЦИИ СИТУАЦИЙ  =====================
-SITUATION_TEMPLATES = [
-    "На утро после вечеринки я обнаружил в своей постели ____. ",
-    "Самая странная причина, по которой я опоздал на работу: ____. ",
-    "В коробке с подарком я нашёл ____. ",
-    "Секрет моего успеха — это ____. ",
-    "Мой внутренний голос звучит как ____. ",
-]
-
-FILLERS = [
-    "курицу в костюме",
-    "горящий тостер",
-    "потерянные носки",
-    "мистерия в шкафу",
-    "странный шёпот ночью",
-]
-
-def generate_new_situation() -> str:
-    template = random.choice(SITUATION_TEMPLATES)
-    filler = random.choice(FILLERS)
-    return template.replace("____", filler)
+# =====================  ГЕНЕРАЦИЯ СИТУАЦИЙ ЧЕРЕЗ OPENAI  =====================
+async def generate_situations_via_openai(count: int = 1) -> List[str]:
+    prompt = (
+        f"Сгенерируй {count} забавных ситуаций для игры, "
+        f"каждая с пропуском '____' для добавления ответа. "
+        f"Например: 'На утро после вечеринки я обнаружил ____.' "
+        f"Ответы должны быть короткими и креативными."
+    )
+    try:
+        response = await openai.ChatCompletion.acreate(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=800,
+            temperature=0.9,
+            n=1,
+        )
+        text = response.choices[0].message.content.strip()
+        situations = [line.strip("- \u2022\t ") for line in text.split("\n") if line.strip()]
+        return situations[:count]
+    except Exception as e:
+        print(f"Ошибка генерации ситуаций через OpenAI: {e}")
+        return ["Ошибка генерации ситуации. Попробуйте позже."]
 
 # =====================  УТИЛИТЫ  =====================
 def ensure_game(chat_id: int) -> GameState:
@@ -102,7 +109,7 @@ def deal_to_full_hand(game: GameState, user_id: int):
     hand = game.hands.setdefault(user_id, [])
     while len(hand) < HAND_SIZE:
         if not game.deck:
-            # Для демонстрации простой колоды
+            # На время простой набор карт
             game.deck = [f"карта {i}" for i in range(1, 101)]
             random.shuffle(game.deck)
         if not game.deck:
@@ -234,7 +241,9 @@ async def cmd_start_round(message: Message):
     game.round_no += 1
     game.answers.clear()
 
-    game.current_situation = generate_new_situation()
+    # Генерируем ситуацию через OpenAI
+    situations = await generate_situations_via_openai()
+    game.current_situation = situations[0] if situations else "Не удалось сгенерировать ситуацию."
 
     host_name = game.current_host_name()
 
@@ -367,7 +376,8 @@ def register_game_handlers(dp):
     dp.include_router(router)
 
 async def main():
-    bot = Bot(token="ВАШ_ТОКЕН")
+    # Замените YOUR_TELEGRAM_TOKEN_HERE на ваш токен Telegram бота
+    bot = Bot(token="YOUR_TELEGRAM_TOKEN_HERE")
     dp = Dispatcher()
     register_game_handlers(dp)
     print("Бот запущен...")
