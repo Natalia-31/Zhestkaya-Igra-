@@ -17,7 +17,7 @@ from aiogram.types import (
 from PIL import Image, ImageDraw, ImageFont
 
 # =====================  НАСТРОЙКИ  =====================
-MIN_PLAYERS = 1  # Для тестирования - 1 игрок
+MIN_PLAYERS = 1
 HAND_SIZE = 10
 ROUND_TIMEOUT = 40
 
@@ -26,7 +26,6 @@ try:
 except NameError:
     BASE_DIR = Path(".").resolve()
 
-CARDS_PATH = BASE_DIR / "cards.json"
 FONT_PATH = BASE_DIR / "arial.ttf"
 
 # =====================  РОУТЕР  =====================
@@ -72,30 +71,11 @@ class GameState:
 
 # =====================  ГЛОБАЛЬНОЕ СОСТОЯНИЕ  =====================
 GAMES: Dict[int, GameState] = {}
-ALL_CARDS: List[str] = []
-
-# =====================  ЗАГРУЗКА КАРТ  =====================
-def load_cards():
-    global ALL_CARDS
-    try:
-        if CARDS_PATH.exists():
-            data = json.loads(CARDS_PATH.read_text(encoding="utf-8"))
-            cards = list(data.get("cards", []))
-            if cards:
-                ALL_CARDS = cards
-            else:
-                raise Exception("Файл cards.json пуст.")
-        else:
-            raise Exception("Файл cards.json не найден.")
-    except Exception as ex:
-        raise Exception(f"Ошибка загрузки карт: {ex}")
-
-load_cards()
 
 # =====================  БЛОК ГЕНЕРАЦИИ СИТУАЦИЙ  =====================
 SITUATION_TEMPLATES = [
     "На утро после вечеринки я обнаружил в своей постели ____. ",
-    "Самая странная причина, по которой я опоздал на работу: ____.",
+    "Самая странная причина, по которой я опоздал на работу: ____. ",
     "В коробке с подарком я нашёл ____. ",
     "Секрет моего успеха — это ____. ",
     "Мой внутренний голос звучит как ____. ",
@@ -122,7 +102,8 @@ def deal_to_full_hand(game: GameState, user_id: int):
     hand = game.hands.setdefault(user_id, [])
     while len(hand) < HAND_SIZE:
         if not game.deck:
-            game.deck = ALL_CARDS.copy()
+            # Для демонстрации простой колоды
+            game.deck = [f"карта {i}" for i in range(1, 101)]
             random.shuffle(game.deck)
         if not game.deck:
             break
@@ -130,35 +111,30 @@ def deal_to_full_hand(game: GameState, user_id: int):
 
 def make_answers_keyboard(hand: List[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"👉 {card[:35]}...", callback_data=f"ans:{idx}")]
-        for idx, card in enumerate(hand)
+        [InlineKeyboardButton(text=f"👉 {card[:35]}...", callback_data=f"ans:{idx}")] for idx, card in enumerate(hand)
     ])
 
 def make_choices_keyboard(answers: List[Answer]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"Выбрать #{idx}", callback_data=f"pick:{idx-1}")]
-        for idx, _ in enumerate(answers, 1)
+        [InlineKeyboardButton(text=f"Выбрать #{idx}", callback_data=f"pick:{idx-1}")] for idx, _ in enumerate(answers, 1)
     ])
 
 def answers_summary(answers: List[Answer]) -> str:
     if not answers:
         return "Ответов пока нет."
-    lines = [f"#{i+1}: {a.text} (от: {a.user_name})" for i, a in enumerate(answers)]
-    return "Ответы игроков:\n\n" + "\n".join(lines)
+    return "Ответы игроков:\n\n" + "\n".join(f"#{i+1}: {a.text} (от: {a.user_name})" for i, a in enumerate(answers))
 
 async def generate_image_file(situation: str, answer: str, out_path: Path) -> Optional[Path]:
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         img = Image.new("RGB", (1024, 1024), color=(245, 246, 248))
         draw = ImageDraw.Draw(img)
-
         try:
             font_title = ImageFont.truetype(str(FONT_PATH), 42)
             font_body = ImageFont.truetype(str(FONT_PATH), 36)
         except IOError:
             font_title = ImageFont.load_default()
             font_body = ImageFont.load_default()
-
         draw.text((40, 40), "Жесткая Игра", fill=(20, 20, 20), font=font_title)
 
         def wrap(text: str, width: int = 30) -> List[str]:
@@ -168,17 +144,22 @@ async def generate_image_file(situation: str, answer: str, out_path: Path) -> Op
                 if len(" ".join(buf)) > width:
                     lines.append(" ".join(buf[:-1]))
                     buf = [w]
-            if buf: lines.append(" ".join(buf))
+            if buf:
+                lines.append(" ".join(buf))
             return lines
 
         y = 120
-        draw.text((40, y), "Ситуация:", fill=(40, 40, 40), font=font_body); y += 40
+        draw.text((40, y), "Ситуация:", fill=(40, 40, 40), font=font_body)
+        y += 40
         for line in wrap(situation):
-            draw.text((60, y), line, fill=(10, 10, 10), font=font_body); y += 40
+            draw.text((60, y), line, fill=(10, 10, 10), font=font_body)
+            y += 40
         y += 20
-        draw.text((40, y), "Ответ:", fill=(40, 40, 40), font=font_body); y += 40
+        draw.text((40, y), "Ответ:", fill=(40, 40, 40), font=font_body)
+        y += 40
         for line in wrap(answer):
-            draw.text((60, y), line, fill=(10, 10, 10), font=font_body); y += 40
+            draw.text((60, y), line, fill=(10, 10, 10), font=font_body)
+            y += 40
 
         img.save(out_path)
         return out_path
@@ -194,7 +175,7 @@ async def show_answers_for_all(bot: Bot, chat_id: int):
 
     random.shuffle(game.answers)
     game.phase = "choose"
-    
+
     text = (
         f"🧾 Ситуация:\n<b>{game.current_situation}</b>\n\n"
         + answers_summary(game.answers)
@@ -229,11 +210,9 @@ async def cmd_join(message: Message):
     user = message.from_user
     if not user:
         return
-
     if user.id in game.players:
         await message.reply("Ты уже в игре! ✋")
         return
-
     game.players[user.id] = user.full_name
     deal_to_full_hand(game, user.id)
     await message.answer(
@@ -255,7 +234,6 @@ async def cmd_start_round(message: Message):
     game.round_no += 1
     game.answers.clear()
 
-    # Используем генератор ситуаций
     game.current_situation = generate_new_situation()
 
     host_name = game.current_host_name()
@@ -279,7 +257,7 @@ async def send_hand_to_player(bot: Bot, game: GameState, user_id: int):
     if not hand:
         deal_to_full_hand(game, user_id)
         hand = game.hands[user_id]
-    
+
     if not hand:
         try:
             await bot.send_message(user_id, "У вас закончились карты!")
@@ -299,7 +277,6 @@ async def cb_pick_answer(callback: CallbackQuery, bot: Bot):
         return
     game = ensure_game(callback.message.chat.id)
     user = callback.from_user
-
     if game.phase != "collect":
         await callback.answer("Сейчас не время отвечать.", show_alert=True)
         return
@@ -312,27 +289,21 @@ async def cb_pick_answer(callback: CallbackQuery, bot: Bot):
     if user.id == game.current_host_id():
         await callback.answer("Ведущий не может отвечать.", show_alert=True)
         return
-
     try:
         idx = int(callback.data.split(":")[1])
         hand = game.hands.get(user.id, [])
         if not (0 <= idx < len(hand)):
             await callback.answer("Нет такой карты.", show_alert=True)
             return
-        
         card_text = hand.pop(idx)
         game.answers.append(Answer(user_id=user.id, text=card_text, user_name=user.full_name))
         deal_to_full_hand(game, user.id)
-        
         await callback.answer("Ответ принят!", show_alert=False)
         await callback.message.delete()
-
         await bot.send_message(game.chat_id, f"✅ {user.full_name} сделал(а) свой выбор.")
-
         expecting = len([p for p in game.player_ids if p != game.current_host_id()])
         if len(game.answers) >= expecting:
             await show_answers_for_all(bot, game.chat_id)
-
     except (ValueError, IndexError):
         await callback.answer("Ошибка выбора карты.", show_alert=True)
 
@@ -342,19 +313,16 @@ async def cb_pick_winner(callback: CallbackQuery, bot: Bot):
         return
     game = ensure_game(callback.message.chat.id)
     user = callback.from_user
-
     if game.phase != "choose":
         await callback.answer("Сейчас не время выбирать.", show_alert=True)
         return
     if user.id != game.current_host_id():
         await callback.answer("Выбирать может только ведущий.", show_alert=True)
         return
-
     try:
         idx = int(callback.data.split(":")[1])
         winner_answer = game.answers[idx]
         winner_name = winner_answer.user_name
-
         await callback.message.edit_text(
             f"🏆 Ведущий ({game.current_host_name()}) выбрал лучший ответ!\n\n"
             f"Победитель раунда: <b>{winner_name}</b>\n"
@@ -362,9 +330,7 @@ async def cb_pick_winner(callback: CallbackQuery, bot: Bot):
             parse_mode="HTML",
             reply_markup=None
         )
-
         out_path = BASE_DIR / "generated" / f"round_{game.round_no}.png"
-        
         if await generate_image_file(game.current_situation or "", winner_answer.text, out_path):
             try:
                 await bot.send_photo(
@@ -376,7 +342,6 @@ async def cb_pick_winner(callback: CallbackQuery, bot: Bot):
                 await bot.send_message(game.chat_id, f"(Не удалось отправить изображение: {e})")
         else:
             await bot.send_message(game.chat_id, "(Не удалось сгенерировать изображение.)")
-        
         game.next_host()
         game.phase = "lobby"
         await bot.send_message(
@@ -387,7 +352,6 @@ async def cb_pick_winner(callback: CallbackQuery, bot: Bot):
             parse_mode="HTML"
         )
         await callback.answer()
-
     except (ValueError, IndexError):
         await callback.answer("Ошибка выбора победителя.", show_alert=True)
 
@@ -396,7 +360,6 @@ async def round_timeout_watchdog(bot: Bot, chat_id: int, delay: int):
     game = GAMES.get(chat_id)
     if not game or game.phase != "collect":
         return
-    
     await bot.send_message(chat_id, "⏰ Время вышло! Показываю, что успели отправить…")
     await show_answers_for_all(bot, chat_id)
 
@@ -407,7 +370,6 @@ async def main():
     bot = Bot(token="ВАШ_ТОКЕН")
     dp = Dispatcher()
     register_game_handlers(dp)
-    
     print("Бот запущен...")
     await dp.start_polling(bot)
 
