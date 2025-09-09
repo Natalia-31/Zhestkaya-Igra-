@@ -29,7 +29,7 @@ except NameError:
 
 FONT_PATH = BASE_DIR / "arial.ttf"
 
-# Добавьте ваш OpenAI API ключ в переменную окружения OPENAI_API_KEY
+# OpenAI API ключ из переменной окружения
 openai.api_key = os.getenv("OPENAI_API_KEY")
 if not openai.api_key:
     raise RuntimeError("OpenAI API ключ не найден! Установите переменную окружения OPENAI_API_KEY.")
@@ -79,12 +79,12 @@ class GameState:
 GAMES: Dict[int, GameState] = {}
 
 # =====================  ГЕНЕРАЦИЯ СИТУАЦИЙ ЧЕРЕЗ OPENAI  =====================
-async def generate_situations_via_openai(count: int = 1) -> List[str]:
+async def generate_situations_via_openai(count: int = 5) -> List[str]:
     prompt = (
-        f"Сгенерируй {count} забавных ситуаций для игры, "
-        f"каждая с пропуском '____' для добавления ответа. "
-        f"Например: 'На утро после вечеринки я обнаружил ____.' "
-        f"Ответы должны быть короткими и креативными."
+        f"Сгенерируй {count} коротких забавных ситуаций для игры, "
+        f"каждая ситуация должна включать ровно один пропуск в виде '____', например:\n"
+        f"Самая странная причина, по которой я опоздал на работу: ____.\n"
+        f"Верни только шаблоны с пропусками, без подставленных ответов, по одной ситуации на строку."
     )
     try:
         response = await openai.ChatCompletion.acreate(
@@ -95,7 +95,8 @@ async def generate_situations_via_openai(count: int = 1) -> List[str]:
             n=1,
         )
         text = response.choices[0].message.content.strip()
-        situations = [line.strip("- \u2022\t ") for line in text.split("\n") if line.strip()]
+        # Разбиваем на строки, фильтруем только те с '____'
+        situations = [line.strip("- \u2022\t ") for line in text.split("\n") if "____" in line]
         return situations[:count]
     except Exception as e:
         print(f"Ошибка генерации ситуаций через OpenAI: {e}")
@@ -109,7 +110,7 @@ def deal_to_full_hand(game: GameState, user_id: int):
     hand = game.hands.setdefault(user_id, [])
     while len(hand) < HAND_SIZE:
         if not game.deck:
-            # На время простой набор карт
+            # Пример простой колоды
             game.deck = [f"карта {i}" for i in range(1, 101)]
             random.shuffle(game.deck)
         if not game.deck:
@@ -241,7 +242,6 @@ async def cmd_start_round(message: Message):
     game.round_no += 1
     game.answers.clear()
 
-    # Генерируем ситуацию через OpenAI
     situations = await generate_situations_via_openai()
     game.current_situation = situations[0] if situations else "Не удалось сгенерировать ситуацию."
 
@@ -376,8 +376,7 @@ def register_game_handlers(dp):
     dp.include_router(router)
 
 async def main():
-    # Замените YOUR_TELEGRAM_TOKEN_HERE на ваш токен Telegram бота
-    bot = Bot(token="YOUR_TELEGRAM_TOKEN_HERE")
+    bot = Bot(token="ВАШ_ТОКЕН")
     dp = Dispatcher()
     register_game_handlers(dp)
     print("Бот запущен...")
