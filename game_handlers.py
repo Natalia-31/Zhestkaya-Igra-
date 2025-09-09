@@ -5,7 +5,7 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
-from aiogram import Router, F, Bot
+from aiogram import Router, F, Bot, Dispatcher
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     Message,
@@ -14,21 +14,18 @@ from aiogram.types import (
     InlineKeyboardButton,
     FSInputFile,
 )
-# Генерация простой картинки для «ситуация + ответ»
 from PIL import Image, ImageDraw, ImageFont
 
 # =====================  НАСТРОЙКИ  =====================
-MIN_PLAYERS = 1  # ИЗМЕНЕНО: Установлено 1 для тестирования
+MIN_PLAYERS = 1  # Для тестирования - 1 игрок
 HAND_SIZE = 10
-ROUND_TIMEOUT = 120  # сек. на сбор ответов
+ROUND_TIMEOUT = 120
 
-# Более надёжное определение пути к файлам assets
 try:
     BASE_DIR = Path(__file__).parent
 except NameError:
     BASE_DIR = Path(".").resolve()
 
-SITUATIONS_PATH = BASE_DIR / "situations.json"
 CARDS_PATH = BASE_DIR / "cards.json"
 FONT_PATH = BASE_DIR / "arial.ttf"
 
@@ -75,43 +72,47 @@ class GameState:
 
 # =====================  ГЛОБАЛЬНОЕ СОСТОЯНИЕ  =====================
 GAMES: Dict[int, GameState] = {}
-ALL_SITUATIONS: List[str] = []
 ALL_CARDS: List[str] = []
 
-# =====================  ЗАГРУЗКА КОНТЕНТА  =====================
-def load_content():
-    """Подгрузить ситуации и карты из файлов, если они есть; иначе — дефолт."""
-    global ALL_SITUATIONS, ALL_CARDS
-    
-    try:
-        if SITUATIONS_PATH.exists():
-            data = json.loads(SITUATIONS_PATH.read_text(encoding="utf-8"))
-            situations = list(data.get("situations", []))
-            if situations:
-                ALL_SITUATIONS = situations
-    except Exception as e:
-        print(f"Ошибка загрузки situations.json: {e}")
-
-    if not ALL_SITUATIONS:
-        ALL_SITUATIONS = [
-            "Утро понедельника. Ты заходишь в офис и видишь только...",
-            "В пустыне внезапно появляется табличка с надписью...",
-        ]
-
+# =====================  ЗАГРУЗКА КАРТ  =====================
+def load_cards():
+    global ALL_CARDS
     try:
         if CARDS_PATH.exists():
             data = json.loads(CARDS_PATH.read_text(encoding="utf-8"))
             cards = list(data.get("cards", []))
             if cards:
                 ALL_CARDS = cards
-    except Exception as e:
-        print(f"Ошибка загрузки cards.json: {e}")
+            else:
+                raise Exception("Файл cards.json пуст.")
+        else:
+            raise Exception("Файл cards.json не найден.")
+    except Exception as ex:
+        raise Exception(f"Ошибка загрузки карт: {ex}")
 
-    if not ALL_CARDS:
-        ALL_CARDS = [
-            "кофе из автомата", "кот в коробке", "молчащий чат",
-            "случайный уволенный", "яркое солнце в глаза",
-        ]
+load_cards()
+
+# =====================  БЛОК ГЕНЕРАЦИИ СИТУАЦИЙ  =====================
+SITUATION_TEMPLATES = [
+    "На утро после вечеринки я обнаружил в своей постели ____. ",
+    "Самая странная причина, по которой я опоздал на работу: ____.",
+    "В коробке с подарком я нашёл ____. ",
+    "Секрет моего успеха — это ____. ",
+    "Мой внутренний голос звучит как ____. ",
+]
+
+FILLERS = [
+    "курицу в костюме",
+    "горящий тостер",
+    "потерянные носки",
+    "мистерия в шкафу",
+    "странный шёпот ночью",
+]
+
+def generate_new_situation() -> str:
+    template = random.choice(SITUATION_TEMPLATES)
+    filler = random.choice(FILLERS)
+    return template.replace("____", filler)
 
 # =====================  УТИЛИТЫ  =====================
 def ensure_game(chat_id: int) -> GameState:
@@ -146,7 +147,6 @@ def answers_summary(answers: List[Answer]) -> str:
     return "Ответы игроков:\n\n" + "\n".join(lines)
 
 async def generate_image_file(situation: str, answer: str, out_path: Path) -> Optional[Path]:
-    """Сгенерировать PNG-картинку 1024x1024 с текстом."""
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         img = Image.new("RGB", (1024, 1024), color=(245, 246, 248))
@@ -227,7 +227,8 @@ async def cmd_new_game(message: Message):
 async def cmd_join(message: Message):
     game = ensure_game(message.chat.id)
     user = message.from_user
-    if not user: return
+    if not user:
+        return
 
     if user.id in game.players:
         await message.reply("Ты уже в игре! ✋")
@@ -253,7 +254,9 @@ async def cmd_start_round(message: Message):
     game.phase = "collect"
     game.round_no += 1
     game.answers.clear()
-    game.current_situation = random.choice(ALL_SITUATIONS)
+
+    # Используем генератор ситуаций
+    game.current_situation = generate_new_situation()
 
     host_name = game.current_host_name()
 
@@ -272,7 +275,6 @@ async def cmd_start_round(message: Message):
     asyncio.create_task(round_timeout_watchdog(message.bot, message.chat.id, ROUND_TIMEOUT))
 
 async def send_hand_to_player(bot: Bot, game: GameState, user_id: int):
-    """Отправить игроку его руку карт в личные сообщения."""
     hand = game.hands.get(user_id, [])
     if not hand:
         deal_to_full_hand(game, user_id)
@@ -293,24 +295,30 @@ async def send_hand_to_player(bot: Bot, game: GameState, user_id: int):
 
 @router.callback_query(F.data.startswith("ans:"))
 async def cb_pick_answer(callback: CallbackQuery, bot: Bot):
-    if not callback.message: return
+    if not callback.message:
+        return
     game = ensure_game(callback.message.chat.id)
     user = callback.from_user
 
     if game.phase != "collect":
-        return await callback.answer("Сейчас не время отвечать.", show_alert=True)
+        await callback.answer("Сейчас не время отвечать.", show_alert=True)
+        return
     if user.id not in game.players:
-        return await callback.answer("Ты не в игре. Нажми /join в группе.", show_alert=True)
+        await callback.answer("Ты не в игре. Нажми /join в группе.", show_alert=True)
+        return
     if any(a.user_id == user.id for a in game.answers):
-        return await callback.answer("Ты уже отправил ответ.", show_alert=True)
+        await callback.answer("Ты уже отправил ответ.", show_alert=True)
+        return
     if user.id == game.current_host_id():
-        return await callback.answer("Ведущий не может отвечать.", show_alert=True)
+        await callback.answer("Ведущий не может отвечать.", show_alert=True)
+        return
 
     try:
         idx = int(callback.data.split(":")[1])
         hand = game.hands.get(user.id, [])
         if not (0 <= idx < len(hand)):
-            return await callback.answer("Нет такой карты.", show_alert=True)
+            await callback.answer("Нет такой карты.", show_alert=True)
+            return
         
         card_text = hand.pop(idx)
         game.answers.append(Answer(user_id=user.id, text=card_text, user_name=user.full_name))
@@ -328,17 +336,19 @@ async def cb_pick_answer(callback: CallbackQuery, bot: Bot):
     except (ValueError, IndexError):
         await callback.answer("Ошибка выбора карты.", show_alert=True)
 
-
 @router.callback_query(F.data.startswith("pick:"))
 async def cb_pick_winner(callback: CallbackQuery, bot: Bot):
-    if not callback.message: return
+    if not callback.message:
+        return
     game = ensure_game(callback.message.chat.id)
     user = callback.from_user
 
     if game.phase != "choose":
-        return await callback.answer("Сейчас не время выбирать.", show_alert=True)
+        await callback.answer("Сейчас не время выбирать.", show_alert=True)
+        return
     if user.id != game.current_host_id():
-        return await callback.answer("Выбирать может только ведущий.", show_alert=True)
+        await callback.answer("Выбирать может только ведущий.", show_alert=True)
+        return
 
     try:
         idx = int(callback.data.split(":")[1])
@@ -381,7 +391,6 @@ async def cb_pick_winner(callback: CallbackQuery, bot: Bot):
     except (ValueError, IndexError):
         await callback.answer("Ошибка выбора победителя.", show_alert=True)
 
-# =====================  ТАЙМАУТ СБОРА ОТВЕТОВ  =====================
 async def round_timeout_watchdog(bot: Bot, chat_id: int, delay: int):
     await asyncio.sleep(delay)
     game = GAMES.get(chat_id)
@@ -391,13 +400,11 @@ async def round_timeout_watchdog(bot: Bot, chat_id: int, delay: int):
     await bot.send_message(chat_id, "⏰ Время вышло! Показываю, что успели отправить…")
     await show_answers_for_all(bot, chat_id)
 
-# =====================  РЕГИСТРАЦИЯ И ЗАПУСК  =====================
 def register_game_handlers(dp):
-    load_content()
     dp.include_router(router)
 
 async def main():
-    bot = Bot(token="ВАШ_СЕКРЕТНЫЙ_ТОКЕН")
+    bot = Bot(token="ВАШ_ТОКЕН")
     dp = Dispatcher()
     register_game_handlers(dp)
     
