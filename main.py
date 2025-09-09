@@ -1,3 +1,16 @@
+import os
+import openai
+
+# Сразу получаем ключ из переменной окружения
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+if not openai.api_key:
+    raise RuntimeError("Не найден OpenAI API ключ! Установите OPENAI_API_KEY в переменных окружения.")
+
+# Далее идут ваши другие импорты и остальной код
+import asyncio
+import random
+# ...
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
