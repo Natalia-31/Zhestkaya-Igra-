@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 # =====================  НАСТРОЙКИ  =====================
 MIN_PLAYERS = 1  # Для тестирования - 1 игрок
 HAND_SIZE = 10
-ROUND_TIMEOUT = 120
+ROUND_TIMEOUT = 40
 
 try:
     BASE_DIR = Path(__file__).parent
