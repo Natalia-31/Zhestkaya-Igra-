@@ -29,10 +29,12 @@ except NameError:
 
 FONT_PATH = BASE_DIR / "arial.ttf"
 
-# OpenAI API ключ из переменной окружения
+# OpenAI setup (использует переменную окружения OPENAI_API_KEY)
 openai.api_key = os.getenv("OPENAI_API_KEY")
 if not openai.api_key:
-    raise RuntimeError("OpenAI API ключ не найден! Установите переменную окружения OPENAI_API_KEY.")
+    raise RuntimeError("OpenAI API ключ не найден! Установите OPENAI_API_KEY.")
+
+client = openai.OpenAI(api_key=openai.api_key)
 
 # =====================  РОУТЕР  =====================
 router = Router()
@@ -78,8 +80,8 @@ class GameState:
 # =====================  ГЛОБАЛЬНОЕ СОСТОЯНИЕ  =====================
 GAMES: Dict[int, GameState] = {}
 
-# =====================  ГЕНЕРАЦИЯ СИТУАЦИЙ ЧЕРЕЗ OPENAI  =====================
-async def generate_situations_via_openai(count: int = 5) -> List[str]:
+# =====================  ГЕНЕРАЦИЯ СИТУАЦИЙ ЧЕРЕЗ OPENAI (синхронно)  =====================
+def generate_situations_sync(count: int = 5) -> List[str]:
     prompt = (
         f"Сгенерируй {count} коротких забавных ситуаций для игры, "
         f"каждая ситуация должна включать ровно один пропуск в виде '____', например:\n"
@@ -87,7 +89,7 @@ async def generate_situations_via_openai(count: int = 5) -> List[str]:
         f"Верни только шаблоны с пропусками, без подставленных ответов, по одной ситуации на строку."
     )
     try:
-        response = await openai.ChatCompletion.acreate(
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=800,
@@ -95,12 +97,14 @@ async def generate_situations_via_openai(count: int = 5) -> List[str]:
             n=1,
         )
         text = response.choices[0].message.content.strip()
-        # Разбиваем на строки, фильтруем только те с '____'
         situations = [line.strip("- \u2022\t ") for line in text.split("\n") if "____" in line]
         return situations[:count]
     except Exception as e:
         print(f"Ошибка генерации ситуаций через OpenAI: {e}")
         return ["Ошибка генерации ситуации. Попробуйте позже."]
+
+async def generate_situations_via_openai(count: int = 5) -> List[str]:
+    return await asyncio.to_thread(generate_situations_sync, count)
 
 # =====================  УТИЛИТЫ  =====================
 def ensure_game(chat_id: int) -> GameState:
