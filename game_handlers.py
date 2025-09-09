@@ -18,7 +18,7 @@ import openai
 import os
 
 # =====================  НАСТРОЙКИ  =====================
-MIN_PLAYERS = 2
+MIN_PLAYERS = 1
 HAND_SIZE = 10
 ROUND_TIMEOUT = 40
 
@@ -29,7 +29,6 @@ except NameError:
 
 FONT_PATH = BASE_DIR / "arial.ttf"
 
-# OpenAI setup (использует переменную окружения OPENAI_API_KEY)
 openai.api_key = os.getenv("OPENAI_API_KEY")
 if not openai.api_key:
     raise RuntimeError("OpenAI API ключ не найден! Установите OPENAI_API_KEY.")
@@ -80,13 +79,13 @@ class GameState:
 # =====================  ГЛОБАЛЬНОЕ СОСТОЯНИЕ  =====================
 GAMES: Dict[int, GameState] = {}
 
-# =====================  ГЕНЕРАЦИЯ СИТУАЦИЙ ЧЕРЕЗ OPENAI (синхронно)  =====================
+# =====================  OPENAI: Генерация ситуаций и ответов =====================
 def generate_situations_sync(count: int = 5) -> List[str]:
     prompt = (
         f"Сгенерируй {count} коротких забавных ситуаций для игры, "
-        f"каждая ситуация должна включать ровно один пропуск в виде '____', например:\n"
+        f"каждая ситуация с пропуском '____', например:\n"
         f"Самая странная причина, по которой я опоздал на работу: ____.\n"
-        f"Верни только шаблоны с пропусками, без подставленных ответов, по одной ситуации на строку."
+        f"Верни только шаблоны с пропусками, без подставленных ответов, по одной на строку."
     )
     try:
         response = client.chat.completions.create(
@@ -106,6 +105,30 @@ def generate_situations_sync(count: int = 5) -> List[str]:
 async def generate_situations_via_openai(count: int = 5) -> List[str]:
     return await asyncio.to_thread(generate_situations_sync, count)
 
+def generate_cards_sync(count: int = 50) -> List[str]:
+    prompt = (
+        f"Сгенерируй {count} коротких забавных ответов для игры, "
+        f"которые игроки будут использовать как карты. "
+        f"Верни ответы списком по одному на строку."
+    )
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=1500,
+            temperature=0.9,
+            n=1,
+        )
+        text = response.choices[0].message.content.strip()
+        cards = [line.strip("- \u2022\t ") for line in text.split("\n") if line.strip()]
+        return cards[:count]
+    except Exception as e:
+        print(f"Ошибка генерации ответов через OpenAI: {e}")
+        return [f"Ответ #{i+1}" for i in range(count)]
+
+async def generate_cards_via_openai(count: int = 50) -> List[str]:
+    return await asyncio.to_thread(generate_cards_sync, count)
+
 # =====================  УТИЛИТЫ  =====================
 def ensure_game(chat_id: int) -> GameState:
     return GAMES.setdefault(chat_id, GameState(chat_id=chat_id))
@@ -114,9 +137,9 @@ def deal_to_full_hand(game: GameState, user_id: int):
     hand = game.hands.setdefault(user_id, [])
     while len(hand) < HAND_SIZE:
         if not game.deck:
-            # Пример простой колоды
-            game.deck = [f"карта {i}" for i in range(1, 101)]
-            random.shuffle(game.deck)
+            # Генерируем новую колоду карт-ответов перед раундом
+            # Эту логику перенесём в старт раунда, здесь можно оставить пусто
+            break
         if not game.deck:
             break
         hand.append(game.deck.pop())
@@ -246,8 +269,11 @@ async def cmd_start_round(message: Message):
     game.round_no += 1
     game.answers.clear()
 
+    # Генерируем ситуацию и новые ответы через OpenAI
     situations = await generate_situations_via_openai()
     game.current_situation = situations[0] if situations else "Не удалось сгенерировать ситуацию."
+    game.deck = await generate_cards_via_openai()
+    random.shuffle(game.deck)
 
     host_name = game.current_host_name()
 
@@ -259,17 +285,17 @@ async def cmd_start_round(message: Message):
         parse_mode="HTML"
     )
 
+    # Раздать новые карты каждому игроку (кроме ведущего)
     for uid in game.player_ids:
         if uid != game.current_host_id():
+            game.hands[uid] = []
+            deal_to_full_hand(game, uid)
             await send_hand_to_player(message.bot, game, uid)
 
     asyncio.create_task(round_timeout_watchdog(message.bot, message.chat.id, ROUND_TIMEOUT))
 
 async def send_hand_to_player(bot: Bot, game: GameState, user_id: int):
     hand = game.hands.get(user_id, [])
-    if not hand:
-        deal_to_full_hand(game, user_id)
-        hand = game.hands[user_id]
 
     if not hand:
         try:
@@ -290,6 +316,7 @@ async def cb_pick_answer(callback: CallbackQuery, bot: Bot):
         return
     game = ensure_game(callback.message.chat.id)
     user = callback.from_user
+
     if game.phase != "collect":
         await callback.answer("Сейчас не время отвечать.", show_alert=True)
         return
@@ -302,21 +329,26 @@ async def cb_pick_answer(callback: CallbackQuery, bot: Bot):
     if user.id == game.current_host_id():
         await callback.answer("Ведущий не может отвечать.", show_alert=True)
         return
+
     try:
         idx = int(callback.data.split(":")[1])
         hand = game.hands.get(user.id, [])
         if not (0 <= idx < len(hand)):
             await callback.answer("Нет такой карты.", show_alert=True)
             return
+
         card_text = hand.pop(idx)
         game.answers.append(Answer(user_id=user.id, text=card_text, user_name=user.full_name))
         deal_to_full_hand(game, user.id)
+
         await callback.answer("Ответ принят!", show_alert=False)
         await callback.message.delete()
         await bot.send_message(game.chat_id, f"✅ {user.full_name} сделал(а) свой выбор.")
+
         expecting = len([p for p in game.player_ids if p != game.current_host_id()])
         if len(game.answers) >= expecting:
             await show_answers_for_all(bot, game.chat_id)
+
     except (ValueError, IndexError):
         await callback.answer("Ошибка выбора карты.", show_alert=True)
 
@@ -326,16 +358,19 @@ async def cb_pick_winner(callback: CallbackQuery, bot: Bot):
         return
     game = ensure_game(callback.message.chat.id)
     user = callback.from_user
+
     if game.phase != "choose":
         await callback.answer("Сейчас не время выбирать.", show_alert=True)
         return
     if user.id != game.current_host_id():
         await callback.answer("Выбирать может только ведущий.", show_alert=True)
         return
+
     try:
         idx = int(callback.data.split(":")[1])
         winner_answer = game.answers[idx]
         winner_name = winner_answer.user_name
+
         await callback.message.edit_text(
             f"🏆 Ведущий ({game.current_host_name()}) выбрал лучший ответ!\n\n"
             f"Победитель раунда: <b>{winner_name}</b>\n"
@@ -343,6 +378,7 @@ async def cb_pick_winner(callback: CallbackQuery, bot: Bot):
             parse_mode="HTML",
             reply_markup=None
         )
+
         out_path = BASE_DIR / "generated" / f"round_{game.round_no}.png"
         if await generate_image_file(game.current_situation or "", winner_answer.text, out_path):
             try:
@@ -355,8 +391,10 @@ async def cb_pick_winner(callback: CallbackQuery, bot: Bot):
                 await bot.send_message(game.chat_id, f"(Не удалось отправить изображение: {e})")
         else:
             await bot.send_message(game.chat_id, "(Не удалось сгенерировать изображение.)")
+
         game.next_host()
         game.phase = "lobby"
+
         await bot.send_message(
             game.chat_id,
             "Раунд завершён!\n"
@@ -365,6 +403,7 @@ async def cb_pick_winner(callback: CallbackQuery, bot: Bot):
             parse_mode="HTML"
         )
         await callback.answer()
+
     except (ValueError, IndexError):
         await callback.answer("Ошибка выбора победителя.", show_alert=True)
 
