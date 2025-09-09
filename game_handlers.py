@@ -12,27 +12,25 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    FSInputFile,  # ИЗМЕНЕНО: Импорт для работы с файлами
+    FSInputFile,
 )
 # Генерация простой картинки для «ситуация + ответ»
 from PIL import Image, ImageDraw, ImageFont
 
 # =====================  НАСТРОЙКИ  =====================
-MIN_PLAYERS = 1
+MIN_PLAYERS = 1  # ИЗМЕНЕНО: Установлено 1 для тестирования
 HAND_SIZE = 10
 ROUND_TIMEOUT = 120  # сек. на сбор ответов
 
-# ИЗМЕНЕНО: Более надёжное определение пути к файлам assets
+# Более надёжное определение пути к файлам assets
 try:
-    # Этот путь будет работать при запуске как скрипт .py
     BASE_DIR = Path(__file__).parent
 except NameError:
-    # Этот путь сработает, если код выполняется в интерактивной среде (например, Jupyter)
     BASE_DIR = Path(".").resolve()
 
-SITUATIONS_PATH = BASE_DIR / "situations.json"   # {"situations":[...]}
-CARDS_PATH = BASE_DIR / "cards.json"             # {"cards":[...]}
-FONT_PATH = BASE_DIR / "arial.ttf"               # Путь к файлу шрифта для генерации картинок
+SITUATIONS_PATH = BASE_DIR / "situations.json"
+CARDS_PATH = BASE_DIR / "cards.json"
+FONT_PATH = BASE_DIR / "arial.ttf"
 
 # =====================  РОУТЕР  =====================
 router = Router()
@@ -42,18 +40,18 @@ router = Router()
 class Answer:
     user_id: int
     text: str
-    user_name: str  # ИЗМЕНЕНО: Добавлено имя пользователя
+    user_name: str
 
 @dataclass
 class GameState:
     chat_id: int
-    players: Dict[int, str] = field(default_factory=dict) # ИЗМЕНЕНО: user_id -> user_name
+    players: Dict[int, str] = field(default_factory=dict)
     host_index: int = 0
-    phase: str = "lobby"  # lobby | collect | choose | result
+    phase: str = "lobby"
     round_no: int = 0
     current_situation: Optional[str] = None
     answers: List[Answer] = field(default_factory=list)
-    hands: Dict[int, List[str]] = field(default_factory=dict)  # user_id -> hand
+    hands: Dict[int, List[str]] = field(default_factory=dict)
     deck: List[str] = field(default_factory=list)
 
     @property
@@ -76,17 +74,15 @@ class GameState:
             self.host_index = (self.host_index + 1) % len(self.players)
 
 # =====================  ГЛОБАЛЬНОЕ СОСТОЯНИЕ  =====================
-GAMES: Dict[int, GameState] = {}  # chat_id -> GameState
+GAMES: Dict[int, GameState] = {}
 ALL_SITUATIONS: List[str] = []
 ALL_CARDS: List[str] = []
 
 # =====================  ЗАГРУЗКА КОНТЕНТА  =====================
-# ИЗМЕНЕНО: Логика загрузки теперь более устойчива и использует BASE_DIR
 def load_content():
     """Подгрузить ситуации и карты из файлов, если они есть; иначе — дефолт."""
     global ALL_SITUATIONS, ALL_CARDS
     
-    # Ситуации
     try:
         if SITUATIONS_PATH.exists():
             data = json.loads(SITUATIONS_PATH.read_text(encoding="utf-8"))
@@ -102,7 +98,6 @@ def load_content():
             "В пустыне внезапно появляется табличка с надписью...",
         ]
 
-    # Карты-ответы
     try:
         if CARDS_PATH.exists():
             data = json.loads(CARDS_PATH.read_text(encoding="utf-8"))
@@ -128,7 +123,7 @@ def deal_to_full_hand(game: GameState, user_id: int):
         if not game.deck:
             game.deck = ALL_CARDS.copy()
             random.shuffle(game.deck)
-        if not game.deck: # Если карт всё ещё нет (даже в исходнике)
+        if not game.deck:
             break
         hand.append(game.deck.pop())
 
@@ -147,11 +142,9 @@ def make_choices_keyboard(answers: List[Answer]) -> InlineKeyboardMarkup:
 def answers_summary(answers: List[Answer]) -> str:
     if not answers:
         return "Ответов пока нет."
-    # ИЗМЕНЕНО: Показываем имя автора ответа
     lines = [f"#{i+1}: {a.text} (от: {a.user_name})" for i, a in enumerate(answers)]
     return "Ответы игроков:\n\n" + "\n".join(lines)
 
-# ИЗМЕНЕНО: Функция генерации изображений
 async def generate_image_file(situation: str, answer: str, out_path: Path) -> Optional[Path]:
     """Сгенерировать PNG-картинку 1024x1024 с текстом."""
     try:
@@ -160,11 +153,9 @@ async def generate_image_file(situation: str, answer: str, out_path: Path) -> Op
         draw = ImageDraw.Draw(img)
 
         try:
-            # Используем шрифт из папки со скриптом
             font_title = ImageFont.truetype(str(FONT_PATH), 42)
             font_body = ImageFont.truetype(str(FONT_PATH), 36)
         except IOError:
-            # Если шрифт не найден, используем дефолтный
             font_title = ImageFont.load_default()
             font_body = ImageFont.load_default()
 
@@ -220,7 +211,7 @@ async def cmd_start(message: Message):
         "Как играть:\n"
         "• /new_game — создать лобби\n"
         "• /join — присоединиться\n"
-        "• /start_round — начать раунд (когда наберется 3+ игрока)\n"
+        "• /start_round — начать раунд\n"
     )
 
 @router.message(Command("new_game"))
@@ -228,8 +219,8 @@ async def cmd_new_game(message: Message):
     GAMES[message.chat.id] = GameState(chat_id=message.chat.id)
     await message.answer(
         "🃏 Новая игра создана!\n"
-        "Жмите /join, чтобы присоединиться. Нужно минимум 3 игрока.\n"
-        "Когда все соберутся, первый игрок может начать раунд: /start_round."
+        "Жми /join, чтобы присоединиться.\n"
+        "Когда все соберутся, можно начать раунд: /start_round."
     )
 
 @router.message(Command("join"))
@@ -242,7 +233,7 @@ async def cmd_join(message: Message):
         await message.reply("Ты уже в игре! ✋")
         return
 
-    game.players[user.id] = user.full_name # ИЗМЕНЕНО: Сохраняем ID и имя
+    game.players[user.id] = user.full_name
     deal_to_full_hand(game, user.id)
     await message.answer(
         f"✅ {user.full_name} присоединился.\n"
@@ -264,7 +255,6 @@ async def cmd_start_round(message: Message):
     game.answers.clear()
     game.current_situation = random.choice(ALL_SITUATIONS)
 
-    # ИЗМЕНЕНО: Показываем имя ведущего
     host_name = game.current_host_name()
 
     await message.answer(
@@ -292,7 +282,7 @@ async def send_hand_to_player(bot: Bot, game: GameState, user_id: int):
         try:
             await bot.send_message(user_id, "У вас закончились карты!")
         except Exception:
-            pass # Пользователь мог заблокировать бота
+            pass
         return
 
     kb = make_answers_keyboard(hand)
@@ -327,7 +317,7 @@ async def cb_pick_answer(callback: CallbackQuery, bot: Bot):
         deal_to_full_hand(game, user.id)
         
         await callback.answer("Ответ принят!", show_alert=False)
-        await callback.message.delete() # Удаляем сообщение с картами
+        await callback.message.delete()
 
         await bot.send_message(game.chat_id, f"✅ {user.full_name} сделал(а) свой выбор.")
 
@@ -365,7 +355,6 @@ async def cb_pick_winner(callback: CallbackQuery, bot: Bot):
 
         out_path = BASE_DIR / "generated" / f"round_{game.round_no}.png"
         
-        # ИЗМЕНЕНО: Улучшена отправка изображения
         if await generate_image_file(game.current_situation or "", winner_answer.text, out_path):
             try:
                 await bot.send_photo(
@@ -402,8 +391,21 @@ async def round_timeout_watchdog(bot: Bot, chat_id: int, delay: int):
     await bot.send_message(chat_id, "⏰ Время вышло! Показываю, что успели отправить…")
     await show_answers_for_all(bot, chat_id)
 
-# =====================  РЕГИСТРАЦИЯ  =====================
+# =====================  РЕГИСТРАЦИЯ И ЗАПУСК  =====================
 def register_game_handlers(dp):
-    load_content() # ИЗМЕНЕНО: Название функции
+    load_content()
     dp.include_router(router)
 
+async def main():
+    bot = Bot(token="ВАШ_СЕКРЕТНЫЙ_ТОКЕН")
+    dp = Dispatcher()
+    register_game_handlers(dp)
+    
+    print("Бот запущен...")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот остановлен.")
