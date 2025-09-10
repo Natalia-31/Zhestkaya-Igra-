@@ -76,7 +76,9 @@ GAMES: Dict[int, GameState] = {}
 def generate_situations_sync(count: int = 5) -> List[str]:
     prompt = (
         f"Сгенерируй {count} коротких забавных ситуаций для игры, "
-        f"каждая ситуация с пропуском '____'. Верни только ситуации по одной на строку."
+        f"каждая ситуация с пропуском '____'. Например:\n"
+        f'\"Самая странная причина опоздания: ____.\"\n'
+        f"Верни только шаблоны с пропусками, по одной на строку."
     )
     try:
         response = openai.ChatCompletion.create(
@@ -88,13 +90,10 @@ def generate_situations_sync(count: int = 5) -> List[str]:
         )
         text = response.choices[0].message.content.strip()
         situations = [line.strip("- \u2022\t ") for line in text.split("\n") if "____" in line]
-        if situations:
-            return situations[:count]
-        else:
-            return ["На вечеринке я неожиданно ____."]
+        return situations[:count] if situations else ["На вечеринке я неожиданно ____."]
     except Exception as e:
-        print(f"Ошибка генерации ситуаций: {e}")
-        return ["Ошибка генерации ситуации."]
+        print(f"Ошибка генерации ситуации: {e}")
+        return ["Ошибка генерации ситуации. Попробуйте позже."]
 
 async def generate_situations_via_openai(count: int = 5) -> List[str]:
     return await asyncio.to_thread(generate_situations_sync, count)
@@ -102,7 +101,7 @@ async def generate_situations_via_openai(count: int = 5) -> List[str]:
 def generate_cards_sync(count: int = 50) -> List[str]:
     prompt = (
         f"Сгенерируй {count} коротких смешных ответов для игры, "
-        f"каждый максимум три слова, примеры: «моя мама», «запах гениталий», «утренний секс». "
+        f"каждый не длиннее трёх слов. Примеры: «моя мама», «запах гениталий», «утренний секс».\n"
         f"Верни ответы списком по одному на строку без нумерации и тире."
     )
     try:
