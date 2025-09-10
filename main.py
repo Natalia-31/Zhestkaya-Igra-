@@ -1,57 +1,40 @@
 import asyncio
 import logging
+import os
+
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
+from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import BOT_TOKEN, ADMIN_IDS
-from handlers.game_handlers import register_game_handlers
-from handlers.admin_handlers import register_admin_handlers
-from database_models import init_db
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-
-async def set_bot_commands(bot: Bot):
-    """Устанавливает команды бота"""
-    commands = [
-        BotCommand(command="start", description="🎮 Начать игру"),
-        BotCommand(command="help", description="❓ Помощь"),
-        BotCommand(command="new_game", description="🆕 Создать новую игру"),
-        BotCommand(command="join", description="➕ Присоединиться к игре"),
-        BotCommand(command="stats", description="📊 Статистика"),
-        BotCommand(command="settings", description="⚙️ Настройки игры"),
-    ]
-    await bot.set_my_commands(commands)
-
+# Импортируем хендлеры из вашего файла
+from handlers import game_handlers
 
 async def main():
-    """Главная функция запуска бота"""
-    # Инициализация базы данных
-    await init_db()
+    # Настройка логирования
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    )
 
-    # Создание бота и диспетчера
-    bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher()
+    # Получаем токен из переменных окружения
+    telegram_token = os.getenv("TELEGRAM_TOKEN")
+    if not telegram_token:
+        print("Ошибка: не найден TELEGRAM_TOKEN в переменных окружения.")
+        return
 
-    # Регистрация хендлеров
-    register_game_handlers(dp)
-    register_admin_handlers(dp)
+    # Объекты бота и диспетчера
+    bot = Bot(token=telegram_token)
+    dp = Dispatcher(storage=MemoryStorage())
 
-    # Установка команд
-    await set_bot_commands(bot)
-
-    logger.info("🤖 Бот 'Жесткая Игра' запущен!")
-
-    try:
-        # Запуск polling
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
+    # Регистрируем роутеры
+    dp.include_router(game_handlers.router)
+    
+    print("Бот запущен...")
+    # Запускаем поллинг
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("Бот остановлен.")
