@@ -1,10 +1,11 @@
+# handlers/game_handlers.py
 from __future__ import annotations
 import asyncio
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
-from aiogram import Router, F, Bot, Dispatcher
+from aiogram import Router, F, Bot
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     Message,
@@ -18,22 +19,19 @@ import openai
 import os
 
 # =====================  НАСТРОЙКИ  =====================
-MIN_PLAYERS = 1
+MIN_PLAYERS = 2
 HAND_SIZE = 10
-ROUND_TIMEOUT = 40
+ROUND_TIMEOUT = 60
 
 try:
-    BASE_DIR = Path(__file__).parent
+    BASE_DIR = Path(__file__).parent.parent
 except NameError:
     BASE_DIR = Path(".").resolve()
-
 FONT_PATH = BASE_DIR / "arial.ttf"
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 if not openai.api_key:
     raise RuntimeError("OpenAI API ключ не найден! Установите OPENAI_API_KEY.")
-
-client = openai.OpenAI(api_key=openai.api_key)
 
 router = Router()
 
@@ -49,7 +47,7 @@ class GameState:
     chat_id: int
     players: Dict[int, str] = field(default_factory=dict)
     host_index: int = 0
-    phase: str = "lobby"
+    phase: str = "lobby"  # lobby, collect, choose
     round_no: int = 0
     current_situation: Optional[str] = None
     answers: List[Answer] = field(default_factory=list)
@@ -66,63 +64,51 @@ class GameState:
         return self.player_ids[self.host_index % len(self.player_ids)]
 
     def current_host_name(self) -> Optional[str]:
-        host_id = self.current_host_id()
-        if host_id:
-            return self.players.get(host_id, f"ID: {host_id}")
-        return None
+        return self.players.get(self.current_host_id(), None)
 
     def next_host(self):
         if self.players:
             self.host_index = (self.host_index + 1) % len(self.players)
 
-# =====================  ГЛОБАЛЬНОЕ СОСТОЯНИЕ  =====================
 GAMES: Dict[int, GameState] = {}
 
-# =====================  OPENAI: Генерация ситуаций и ответов =====================
-def generate_situations_sync(count: int = 5) -> List[str]:
+# =====================  OPENAI: Генерация  =====================
+def generate_situations_sync(count: int = 1) -> List[str]:
     prompt = (
-        f"Сгенерируй {count} коротких забавных ситуаций для игры, "
-        f"каждая ситуация с пропуском '____', например:\n"
-        f"Самая странная причина, по которой я опоздал на работу: ____.\n"
-        f"Верни только шаблоны с пропусками, без подставленных ответов, по одной на строку."
+        f"Сгенерируй {count} короткую забавную ситуацию для карточной игры. "
+        f"В ней должен быть один пропуск '____'. Верни только строку с ситуацией."
     )
     try:
-        response = client.chat.completions.create(
+        resp = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=800,
+            max_tokens=200,
             temperature=0.9,
-            n=1,
         )
-        text = response.choices[0].message.content.strip()
-        situations = [line.strip("- \u2022\t ") for line in text.split("\n") if "____" in line]
-        return situations[:count]
-    except Exception as e:
-        print(f"Ошибка генерации ситуаций через OpenAI: {e}")
-        return ["Ошибка генерации ситуации. Попробуйте позже."]
+        text = resp.choices[0].message.content.strip()
+        return [line for line in text.split("\n") if "____" in line][:count]
+    except Exception:
+        return ["На вечеринке я неожиданно ____."]
 
-async def generate_situations_via_openai(count: int = 5) -> List[str]:
+async def generate_situations_via_openai(count: int = 1) -> List[str]:
     return await asyncio.to_thread(generate_situations_sync, count)
 
 def generate_cards_sync(count: int = 50) -> List[str]:
     prompt = (
-        f"Сгенерируй {count} коротких и смешных ответов для игры, "
-        f"каждый — не длиннее трёх слов, примеры: «моя мама», «запах гениталий», «утренний секс». "
-        f"Верни ответы списком по одному на строку."
+        f"Сгенерируй {count} коротких смешных ответов для игры (максимум 3 слова), "
+        f"примеры: «моя мама», «запах гениталий», «утренний секс». "
+        f"Верни ответы по одной строке."
     )
     try:
-        response = client.chat.completions.create(
+        resp = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=800,
-            temperature=0.9,
-            n=1,
+            max_tokens=400,
+            temperature=1.0,
         )
-        text = response.choices[0].message.content.strip()
-        cards = [line.strip("- \u2022\t ") for line in text.split("\n") if line.strip()]
-        return cards[:count]
-    except Exception as e:
-        print(f"Ошибка генерации ответов через OpenAI: {e}")
+        text = resp.choices[0].message.content.strip()
+        return [line for line in text.split("\n") if line.strip()][:count]
+    except Exception:
         return [f"Ответ #{i+1}" for i in range(count)]
 
 async def generate_cards_via_openai(count: int = 50) -> List[str]:
@@ -133,7 +119,6 @@ def ensure_game(chat_id: int) -> GameState:
     return GAMES.setdefault(chat_id, GameState(chat_id=chat_id))
 
 def find_game_by_user(user_id: int) -> Optional[GameState]:
-    """Находит игру, в которой участвует пользователь"""
     for game in GAMES.values():
         if user_id in game.players:
             return game
@@ -141,301 +126,141 @@ def find_game_by_user(user_id: int) -> Optional[GameState]:
 
 def deal_to_full_hand(game: GameState, user_id: int):
     hand = game.hands.setdefault(user_id, [])
-    while len(hand) < HAND_SIZE:
-        if not game.deck:
-            break
+    while len(hand) < HAND_SIZE and game.deck:
         hand.append(game.deck.pop())
 
 def make_answers_keyboard(hand: List[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"👉 {card[:35]}...", callback_data=f"ans:{idx}")] for idx, card in enumerate(hand)
+        [InlineKeyboardButton(text=f"👉 {card}", callback_data=f"ans:{i}")] for i, card in enumerate(hand)
     ])
 
 def make_choices_keyboard(answers: List[Answer]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"Выбрать #{idx}", callback_data=f"pick:{idx-1}")] for idx, _ in enumerate(answers, 1)
+        [InlineKeyboardButton(text=f"{i+1}. {ans.text}", callback_data=f"pick:{i}")]
+        for i, ans in enumerate(answers)
     ])
 
 def answers_summary(answers: List[Answer]) -> str:
-    if not answers:
-        return "Ответов пока нет."
-    return "Ответы игроков:\n\n" + "\n".join(f"#{i+1}: {a.text} (от: {a.user_name})" for i, a in enumerate(answers))
+    return "\n".join(f"{i+1}. {a.text} (от {a.user_name})" for i, a in enumerate(answers))
 
 async def generate_image_file(situation: str, answer: str, out_path: Path) -> Optional[Path]:
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        img = Image.new("RGB", (1024, 1024), color=(245, 246, 248))
+        img = Image.new("RGB", (800, 400), color=(30, 30, 30))
         draw = ImageDraw.Draw(img)
-        try:
-            font_title = ImageFont.truetype(str(FONT_PATH), 42)
-            font_body = ImageFont.truetype(str(FONT_PATH), 36)
-        except IOError:
-            font_title = ImageFont.load_default()
-            font_body = ImageFont.load_default()
-        draw.text((40, 40), "Жесткая Игра", fill=(20, 20, 20), font=font_title)
-
-        def wrap(text: str, width: int = 30) -> List[str]:
-            words, lines, buf = text.split(), [], []
-            for w in words:
-                buf.append(w)
-                if len(" ".join(buf)) > width:
-                    lines.append(" ".join(buf[:-1]))
-                    buf = [w]
-            if buf:
-                lines.append(" ".join(buf))
-            return lines
-
-        y = 120
-        draw.text((40, y), "Ситуация:", fill=(40, 40, 40), font=font_body)
-        y += 40
-        for line in wrap(situation):
-            draw.text((60, y), line, fill=(10, 10, 10), font=font_body)
-            y += 40
-        y += 20
-        draw.text((40, y), "Ответ:", fill=(40, 40, 40), font=font_body)
-        y += 40
-        for line in wrap(answer):
-            draw.text((60, y), line, fill=(10, 10, 10), font=font_body)
-            y += 40
-
+        font = ImageFont.truetype(str(FONT_PATH), 24) if FONT_PATH.exists() else ImageFont.load_default()
+        text = situation.replace("____", answer)
+        draw.text((10, 10), text, fill="white", font=font)
         img.save(out_path)
         return out_path
-    except Exception as e:
-        print(f"Ошибка генерации изображения: {e}")
+    except Exception:
         return None
-
-async def show_answers_for_all(bot: Bot, chat_id: int):
-    game = ensure_game(chat_id)
-    if not game.answers:
-        await bot.send_message(chat_id, "Ответов нет — показывать нечего.")
-        return
-
-    random.shuffle(game.answers)
-    game.phase = "choose"
-
-    text = (
-        f"🧾 Ситуация:\n<b>{game.current_situation}</b>\n\n"
-        + answers_summary(game.answers)
-        + f"\n\nВедущий ({game.current_host_name()}) выбирает лучший ответ."
-    )
-    kb = make_choices_keyboard(game.answers)
-    await bot.send_message(chat_id, text, reply_markup=kb, parse_mode="HTML")
 
 # =====================  ХЕНДЛЕРЫ  =====================
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer(
-        "Привет! Это «Жесткая Игра».\n\n"
-        "Как играть:\n"
-        "• /new_game — создать лобби\n"
-        "• /join — присоединиться\n"
-        "• /start_round — начать раунд\n"
+        "Привет! Это «Жесткая Игра».\n"
+        "/new_game — создать игру\n"
+        "/join — присоединиться\n"
+        "/start_round — начать раунд"
     )
 
 @router.message(Command("new_game"))
 async def cmd_new_game(message: Message):
     GAMES[message.chat.id] = GameState(chat_id=message.chat.id)
-    await message.answer(
-        "🃏 Новая игра создана!\n"
-        "Жми /join, чтобы присоединиться.\n"
-        "Когда все соберутся, можно начать раунд: /start_round."
-    )
+    await message.answer("Новая игра создана! Присоединяйтесь через /join.")
 
 @router.message(Command("join"))
 async def cmd_join(message: Message):
     game = ensure_game(message.chat.id)
     user = message.from_user
-    if not user:
-        return
-    if user.id in game.players:
-        await message.reply("Ты уже в игре! ✋")
-        return
+    if not user or user.id in game.players:
+        return await message.reply("Невозможно присоединиться.")
     game.players[user.id] = user.full_name
-    deal_to_full_hand(game, user.id)
-    await message.answer(
-        f"✅ {user.full_name} присоединился.\n"
-        f"Игроков сейчас: {len(game.players)}"
-    )
+    await message.answer(f"{user.full_name} присоединился. Всего: {len(game.players)}")
 
 @router.message(Command("start_round"))
 async def cmd_start_round(message: Message):
     game = ensure_game(message.chat.id)
     if len(game.players) < MIN_PLAYERS:
-        await message.answer(f"Нужно минимум {MIN_PLAYERS} игрока, а вас {len(game.players)}.")
-        return
+        return await message.answer(f"Нужно минимум {MIN_PLAYERS} игроков.")
     if game.phase != "lobby":
-        await message.answer("Раунд уже идет. Дождитесь его окончания.")
-        return
-
+        return await message.answer("Раунд уже идёт.")
     game.phase = "collect"
     game.round_no += 1
     game.answers.clear()
 
-    situations = await generate_situations_via_openai()
-    game.current_situation = situations[0] if situations else "Не удалось сгенерировать ситуацию."
+    # Генерация
+    situation = (await generate_situations_via_openai())[0]
+    game.current_situation = situation
     game.deck = await generate_cards_via_openai()
     random.shuffle(game.deck)
 
-    host_name = game.current_host_name()
+    await message.answer(f"Раунд {game.round_no}\nСитуация:\n{situation}")
 
-    await message.answer(
-        f"🎬 Раунд #{game.round_no}\n"
-        f"Ведущий: <b>{host_name}</b>\n\n"
-        f"Ситуация:\n<b>{game.current_situation}</b>\n\n"
-        f"Игроки, выбирайте ответы! У вас {ROUND_TIMEOUT} секунд.",
-        parse_mode="HTML"
-    )
-
+    # Раздать руки
     for uid in game.player_ids:
         if uid != game.current_host_id():
-            game.hands[uid] = []
             deal_to_full_hand(game, uid)
-            await send_hand_to_player(message.bot, game, uid)
+            await message.bot.send_message(uid, "Ваша рука:", reply_markup=make_answers_keyboard(game.hands[uid]))
 
-    asyncio.create_task(round_timeout_watchdog(message.bot, message.chat.id, ROUND_TIMEOUT))
-
-async def send_hand_to_player(bot: Bot, game: GameState, user_id: int):
-    hand = game.hands.get(user_id, [])
-    if not hand:
-        try:
-            await bot.send_message(user_id, "У вас закончились карты!")
-        except Exception:
-            pass
-        return
-
-    kb = make_answers_keyboard(hand)
-    try:
-        await bot.send_message(user_id, "Ваша рука. Выберите карту-ответ:", reply_markup=kb)
-    except Exception as e:
-        print(f"Не удалось отправить руку игроку {user_id}: {e}")
+    asyncio.create_task(round_timeout_watchdog(message.bot, message.chat.id, game.round_no))
 
 @router.callback_query(F.data.startswith("ans:"))
-async def cb_pick_answer(callback: CallbackQuery, bot: Bot):
+async def cb_pick_answer(callback: CallbackQuery):
     user = callback.from_user
     game = find_game_by_user(user.id)
-    
-    if not game:
-        await callback.answer("Вы не участвуете в игре.", show_alert=True)
-        return
-
-    print(f"[DEBUG] Игрок {user.id} пытается ответить, фаза: {game.phase}")
-
-    if game.phase != "collect":
-        await callback.answer("Сейчас не время отвечать.", show_alert=True)
-        return
-    if user.id not in game.players:
-        await callback.answer("Ты не в игре. Нажми /join в группе.", show_alert=True)
-        return
-    if any(a.user_id == user.id for a in game.answers):
-        await callback.answer("Ты уже отправил ответ.", show_alert=True)
-        return
-    if user.id == game.current_host_id():
-        await callback.answer("Ведущий не может отвечать.", show_alert=True)
-        return
-
-    try:
-        idx = int(callback.data.split(":")[1])
-        hand = game.hands.get(user.id, [])
-        if not (0 <= idx < len(hand)):
-            await callback.answer("Нет такой карты.", show_alert=True)
-            return
-
-        card_text = hand.pop(idx)
-        game.answers.append(Answer(user_id=user.id, text=card_text, user_name=user.full_name))
-        deal_to_full_hand(game, user.id)
-
-        await callback.answer("Ответ принят!", show_alert=False)
-        await callback.message.delete()
-        await bot.send_message(game.chat_id, f"✅ {user.full_name} сделал(а) свой выбор.")
-
-        expecting = len([p for p in game.player_ids if p != game.current_host_id()])
-        if len(game.answers) >= expecting:
-            await show_answers_for_all(bot, game.chat_id)
-
-    except (ValueError, IndexError):
-        await callback.answer("Ошибка выбора карты.", show_alert=True)
-
-@router.callback_query(F.data.startswith("pick:"))
-async def cb_pick_winner(callback: CallbackQuery, bot: Bot):
-    if not callback.message:
-        return
-    game = ensure_game(callback.message.chat.id)
-    user = callback.from_user
-
-    if game.phase != "choose":
-        await callback.answer("Сейчас не время выбирать.", show_alert=True)
-        return
-    if user.id != game.current_host_id():
-        await callback.answer("Выбирать может только ведущий.", show_alert=True)
-        return
-
-    try:
-        idx = int(callback.data.split(":")[1])
-        winner_answer = game.answers[idx]
-        winner_name = winner_answer.user_name
-
-        await callback.message.edit_text(
-            f"🏆 Ведущий ({game.current_host_name()}) выбрал лучший ответ!\n\n"
-            f"Победитель раунда: <b>{winner_name}</b>\n"
-            f"С ответом: «<b>{winner_answer.text}</b>»\n\nГенерирую картинку...",
-            parse_mode="HTML",
-            reply_markup=None
-        )
-
-        out_path = BASE_DIR / "generated" / f"round_{game.round_no}.png"
-        if await generate_image_file(game.current_situation or "", winner_answer.text, out_path):
-            try:
-                await bot.send_photo(
-                    chat_id=game.chat_id,
-                    photo=FSInputFile(out_path),
-                    caption=f"Ситуация: {game.current_situation}\nОтвет: {winner_answer.text}"
-                )
-            except Exception as e:
-                await bot.send_message(game.chat_id, f"(Не удалось отправить изображение: {e})")
-        else:
-            await bot.send_message(game.chat_id, "(Не удалось сгенерировать изображение.)")
-
-        game.next_host()
-        game.phase = "lobby"
-
-        await bot.send_message(
-            game.chat_id,
-            "Раунд завершён!\n"
-            f"Новый ведущий: <b>{game.current_host_name()}</b>.\n"
-            "Чтобы начать следующий раунд, нажмите /start_round",
-            parse_mode="HTML"
-        )
-        await callback.answer()
-
-    except (ValueError, IndexError):
-        await callback.answer("Ошибка выбора победителя.", show_alert=True)
-
-async def round_timeout_watchdog(bot: Bot, chat_id: int, delay: int):
-    await asyncio.sleep(delay)
-    game = GAMES.get(chat_id)
     if not game or game.phase != "collect":
+        return await callback.answer("Сейчас не время отвечать.", show_alert=True)
+
+    idx = int(callback.data.split(":")[1])
+    hand = game.hands.get(user.id, [])
+    if idx < 0 or idx >= len(hand):
+        return await callback.answer("Неверная карта.", show_alert=True)
+
+    card = hand.pop(idx)
+    game.answers.append(Answer(user_id=user.id, text=card, user_name=user.full_name))
+    await callback.answer("Ответ принят.")
+    await callback.message.delete()
+
+    if len(game.answers) >= len(game.player_ids) - 1:
+        await show_answers_for_all(callback.message.bot, game.chat.id)
+
+async def show_answers_for_all(bot: Bot, chat_id: int):
+    game = ensure_game(chat_id)
+    if game.phase != "collect":
         return
     game.phase = "choose"
-    await bot.send_message(chat_id, "⏰ Время вышло! Показываю, что успели отправить…")
-    await show_answers_for_all(bot, chat_id)
+    await bot.send_message(
+        chat_id,
+        f"Ситуация:\n{game.current_situation}\n\n{answers_summary(game.answers)}",
+        reply_markup=make_choices_keyboard(game.answers)
+    )
 
-def register_game_handlers(dp):
-    dp.include_router(router)
+@router.callback_query(F.data.startswith("pick:"))
+async def cb_pick_winner(callback: CallbackQuery):
+    game = ensure_game(callback.message.chat.id)
+    user = callback.from_user
+    if game.phase != "choose" or user.id != game.current_host_id():
+        return await callback.answer("Нельзя выбрать сейчас.", show_alert=True)
 
-async def main():
-    telegram_token = os.getenv("TELEGRAM_TOKEN")
-    if not telegram_token:
-        print("Ошибка: не найден TELEGRAM_TOKEN")
-        return
-        
-    bot = Bot(token=telegram_token)
-    dp = Dispatcher()
-    register_game_handlers(dp)
-    print("Бот запущен...")
-    await dp.start_polling(bot)
+    idx = int(callback.data.split(":")[1])
+    winner = game.answers[idx]
+    await callback.message.edit_text(f"Победитель: {winner.user_name}\nОтвет: {winner.text}")
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Бот остановлен.")
+    out = BASE_DIR / "generated" / f"round_{game.round_no}.png"
+    img_path = await generate_image_file(game.current_situation, winner.text, out)
+    if img_path:
+        await callback.message.bot.send_photo(game.chat_id, FSInputFile(img_path))
+
+    game.next_host()
+    game.phase = "lobby"
+    await callback.message.bot.send_message(game.chat_id, f"Раунд завершён. Новый ведущий: {game.current_host_name()}")
+
+async def round_timeout_watchdog(bot: Bot, chat_id: int, round_no: int):
+    await asyncio.sleep(ROUND_TIMEOUT)
+    game = GAMES.get(chat_id)
+    if game and game.round_no == round_no and game.phase == "collect":
+        await bot.send_message(chat_id, "⏰ Время вышло!")
+        await show_answers_for_all(bot, chat_id)
