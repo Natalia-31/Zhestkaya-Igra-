@@ -35,6 +35,20 @@ if not openai.api_key:
 
 router = Router()
 
+# =====================  РЕЗЕРВНЫЕ КАРТЫ  =====================
+DEFAULT_CARDS = [
+    "моя мама", "запах гениталий", "утренний секс", "пьяный енот", "квантовый скачок",
+    "мамкин борщ", "грязные носки", "бывший парень", "сломанный унитаз", "живот учителя",
+    "мокрые мечты", "голый дедушка", "протухшее молоко", "взрывная диарея", "жирная тётя",
+    "вонючий сыр", "паукообразная обезьяна", "скользкий банан", "горячий пирожок", "холодная пицца",
+    "странный запах", "мой сосед", "старые трусы", "липкие руки", "волосатые ноги",
+    "смешной кот", "злая собака", "тупая рыба", "умная курица", "ленивый слон",
+    "быстрый черепаха", "медленный гепард", "большой муравей", "маленький кит", "красивый таракан",
+    "уродливая бабочка", "вкусный червяк", "противный торт", "сладкая соль", "солёный сахар",
+    "горячий лёд", "холодный огонь", "мягкий камень", "твёрдая вода", "жидкий металл",
+    "газообразное дерево", "прозрачная грязь", "чистая помойка", "тихий взрыв", "громкая тишина"
+]
+
 # =====================  МОДЕЛИ  =====================
 @dataclass
 class Answer:
@@ -47,7 +61,7 @@ class GameState:
     chat_id: int
     players: Dict[int, str] = field(default_factory=dict)
     host_index: int = 0
-    phase: str = "lobby"  # lobby, collect, choose
+    phase: str = "lobby"
     round_no: int = 0
     current_situation: Optional[str] = None
     answers: List[Answer] = field(default_factory=list)
@@ -89,7 +103,8 @@ def generate_situations_sync(count: int = 1) -> List[str]:
             temperature=0.9,
         )
         text = resp.choices[0].message.content.strip()
-        return [line for line in text.split("\n") if "____" in line][:count]
+        situations = [line.strip("- •\t") for line in text.split("\n") if "____" in line]
+        return situations[:count] if situations else ["На вечеринке я неожиданно ____."]
     except Exception as e:
         print(f"Ошибка генерации ситуации: {e}")
         return ["На вечеринке я неожиданно ____."]
@@ -98,23 +113,46 @@ async def generate_situations_via_openai(count: int = 1) -> List[str]:
     return await asyncio.to_thread(generate_situations_sync, count)
 
 def generate_cards_sync(count: int = 50) -> List[str]:
+    # Сначала пробуем OpenAI
     prompt = (
         f"Сгенерируй {count} коротких смешных ответов для игры (максимум 3 слова), "
         f"примеры: «моя мама», «запах гениталий», «утренний секс». "
-        f"Верни ответы по одной строке."
+        f"Верни ответы по одной строке без нумерации и дефисов."
     )
     try:
         resp = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
+            max_tokens=800,
             temperature=1.0,
         )
         text = resp.choices[0].message.content.strip()
-        return [line.strip("- •\t") for line in text.split("\n") if line.strip()][:count]
+        cards = []
+        for line in text.split("\n"):
+            line = line.strip("- •\t0123456789. ")
+            if line and len(line) < 50:  # Фильтруем слишком длинные
+                cards.append(line)
+        
+        if len(cards) >= 20:  # Если получили достаточно карт
+            return cards[:count]
+        else:
+            print("OpenAI вернул мало карт, используем резервные")
+            return get_default_cards(count)
+            
     except Exception as e:
-        print(f"Ошибка генерации ответов: {e}")
-        return [f"Ответ #{i+1}" for i in range(count)]
+        print(f"Ошибка генерации ответов через OpenAI: {e}")
+        return get_default_cards(count)
+
+def get_default_cards(count: int) -> List[str]:
+    """Возвращает случайный набор из резервных карт"""
+    cards = DEFAULT_CARDS.copy()
+    random.shuffle(cards)
+    # Если нужно больше карт, дублируем список
+    while len(cards) < count:
+        additional = DEFAULT_CARDS.copy()
+        random.shuffle(additional)
+        cards.extend(additional)
+    return cards[:count]
 
 async def generate_cards_via_openai(count: int = 50) -> List[str]:
     return await asyncio.to_thread(generate_cards_sync, count)
@@ -202,6 +240,7 @@ async def cmd_start_round(message: Message):
     game.answers.clear()
 
     # Генерация
+    await message.answer("🔄 Генерирую ситуацию и карты...")
     situations = await generate_situations_via_openai()
     game.current_situation = situations[0] if situations else "Не удалось сгенерировать ситуацию."
     game.deck = await generate_cards_via_openai()
