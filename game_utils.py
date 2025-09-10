@@ -17,7 +17,6 @@ class GameImageGenerator:
         self.images_dir = Path(images_dir)
         self.images_dir.mkdir(exist_ok=True)
         self.situations = self._load_situations()
-
         api_key = os.getenv("OPENAI_API_KEY")
         if api_key:
             try:
@@ -97,10 +96,13 @@ class GameImageGenerator:
                                    "⚠️ Не удалось сгенерировать изображение.")
             return False
 
+# создаём глобальный экземпляр
 gen = GameImageGenerator()
 
 async def send_random_situation_with_image(bot: Bot, chat_id: int) -> bool:
+    """Отправляет ситуацию и изображение."""
     return await gen.send_situation_with_image(bot, chat_id)
 
 def get_random_situation() -> str:
+    """Возвращает случайную ситуацию без изображения."""
     return gen.get_random_situation()
