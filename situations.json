@@ -98,3 +98,13 @@
   "Когда я слышу музыку, я ____.",
   "Самый смешной поступок моего друга — ____."
 ]
+def get_random_unused_situation(game: GameState) -> str:
+    unused = [s for s in all_situations if s not in game.used_situations]
+    if not unused:
+        game.used_situations.clear()
+        unused = all_situations.copy()
+    if not unused:
+        return "Запасная ситуация: ____."
+    situation = random.choice(unused)
+    game.used_situations.add(situation)
+    return situation
