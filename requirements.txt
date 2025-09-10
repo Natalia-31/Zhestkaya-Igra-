@@ -1,3 +1,6 @@
-aiogram>=3.0.0
-openai>=1.0.0
-pillow
+aiogram>=3.4.0
+openai>=1.12.0
+aiohttp>=3.8.0
+aiofiles>=23.0.0
+Pillow>=10.0.0
+python-dotenv>=1.0.0
