@@ -1,127 +1,99 @@
-from aiogram import Router, F, Bot
-from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from aiogram import Router, F
+from aiogram.filters import Command
+from aiogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery
+)
 from game_utils import send_random_situation_with_image, get_random_situation
 
 router = Router()
 
-@router.message(CommandStart())
+# Клавиатура с основными действиями
+def main_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="▶️ Начать игру", callback_data="new_game"),
+                InlineKeyboardButton(text="➕ Присоединиться", callback_data="join_game"),
+                InlineKeyboardButton(text="🎲 Новый раунд", callback_data="start_round"),
+            ]
+        ]
+    )
+
+# Стартовая команда
+@router.message(Command("start"))
 async def cmd_start(message: Message):
-    """Стартовая команда."""
     await message.answer(
-        "🎮 **Добро пожаловать в Жесткую Игру!**\n\n"
-        "Это весёлая игра с ситуациями и изображениями!\n\n"
-        "**Доступные команды:**\n"
-        "• `/start_round` - начать раунд с ситуацией и изображением\n"
-        "• `/situation` - получить случайную ситуацию\n"
-        "• `/test_image` - тест генерации изображения\n"
-        "• `/help` - показать эту справку",
-        parse_mode="Markdown"
+        "🎮 **Жесткая Игра**\n\n"
+        "Выберите действие кнопкой или командой:\n"
+        "/new_game — начать игру\n"
+        "/join_game — присоединиться к игре\n"
+        "/start_round — запустить новый раунд",
+        parse_mode="Markdown",
+        reply_markup=main_menu_kb()
     )
 
-@router.message(Command("help"))
-async def cmd_help(message: Message):
-    """Справка по командам."""
-    await message.answer(
-        "🎮 **Жесткая Игра - Справка**\n\n"
-        "**Команды:**\n"
-        "• `/start_round` - запуск нового раунда\n"
-        "• `/situation` - получить только текст ситуации\n"
-        "• `/test_image` - протестировать генерацию изображения\n\n"
-        "**Как играть:**\n"
-        "1. Запустите раунд командой /start_round\n"
-        "2. Получите ситуацию и изображение к ней\n"
-        "3. Придумайте креативный ответ!\n"
-        "4. Веселитесь! 🎉",
-        parse_mode="Markdown"
-    )
+# /new_game
+@router.message(Command("new_game"))
+async def cmd_new_game(message: Message):
+    # Здесь инициализируйте новую игру: очищайте состояние, список игроков и т.п.
+    # Для примера просто отправляем ответ.
+    await message.answer("✅ Игра начата! Ждём, пока игроки присоединятся.", reply_markup=main_menu_kb())
 
+@router.callback_query(F.data == "new_game")
+async def cb_new_game(callback: CallbackQuery):
+    await callback.answer("Игра начата!", show_alert=False)
+    await callback.message.edit_reply_markup(reply_markup=main_menu_kb())
+
+# /join_game
+@router.message(Command("join_game"))
+async def cmd_join_game(message: Message):
+    user = message.from_user.full_name or message.from_user.username
+    # Добавьте логику: сохраните пользователя в список игроков
+    await message.answer(f"➕ **{user}** присоединился к игре!", parse_mode="Markdown", reply_markup=main_menu_kb())
+
+@router.callback_query(F.data == "join_game")
+async def cb_join_game(callback: CallbackQuery):
+    user = callback.from_user.full_name or callback.from_user.username
+    await callback.answer(show_alert=False)
+    await callback.message.answer(f"➕ **{user}** присоединился к игре!", parse_mode="Markdown")
+
+# /start_round
 @router.message(Command("start_round"))
-async def start_game_round(message: Message):
-    """Начинает новый раунд с ситуацией и изображением."""
-    try:
-        # Отправляем вводный текст
-        await message.answer(
-            "🎮 **Начинаем новый раунд Жесткой Игры!**\n\n"
-            "Сейчас я покажу вам ситуацию и сгенерирую к ней изображение...",
-            parse_mode="Markdown"
-        )
-        
-        # Отправляем ситуацию с изображением
-        success = await send_random_situation_with_image(
-            message.bot, 
-            message.chat.id
-        )
-        
-        if success:
-            await message.answer(
-                "✅ **Готово!** Теперь игроки могут отвечать на ситуацию!\n\n"
-                "Придумайте самый креативный и смешной ответ! 🎯",
-                parse_mode="Markdown"
-            )
-        else:
-            await message.answer(
-                "⚠️ Произошла ошибка при генерации изображения, но игра продолжается!\n\n"
-                "Используйте команду `/situation` чтобы получить новую ситуацию.",
-                parse_mode="Markdown"
-            )
-            
-    except Exception as e:
-        print(f"❌ Ошибка в обработчике раунда: {e}")
-        await message.answer(
-            "❌ Произошла ошибка при запуске раунда. Попробуйте еще раз через несколько секунд."
-        )
-
-@router.message(Command("situation"))
-async def get_situation_only(message: Message):
-    """Получить только текст ситуации без изображения."""
-    try:
-        situation = get_random_situation()
-        await message.answer(
-            f"🎲 **Случайная ситуация:**\n\n_{situation}_\n\n"
-            f"Используйте `/start_round` для получения ситуации с изображением!",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        print(f"❌ Ошибка получения ситуации: {e}")
-        await message.answer("❌ Ошибка получения ситуации. Попробуйте позже.")
-
-@router.message(Command("test_image"))
-async def test_image_generation(message: Message):
-    """Тестовая команда для проверки генерации изображений."""
-    try:
-        await message.answer("🎨 **Тестирую генерацию изображения...**\n\nЭто может занять до 30 секунд.")
-        
-        success = await send_random_situation_with_image(
-            message.bot,
-            message.chat.id
-        )
-        
-        if not success:
-            await message.answer(
-                "❌ **Ошибка генерации изображения**\n\n"
-                "Возможные причины:\n"
-                "• Неверный OPENAI_API_KEY\n"
-                "• Превышен лимит запросов\n"
-                "• Проблемы с интернет-соединением\n\n"
-                "Проверьте настройки и попробуйте позже."
-            )
-        else:
-            await message.answer("✅ **Тест успешно пройден!** Генерация изображений работает корректно.")
-            
-    except Exception as e:
-        print(f"❌ Ошибка тестирования: {e}")
-        await message.answer("❌ Ошибка при тестировании генерации изображений.")
-
-# Обработчик неизвестных команд
-@router.message()
-async def unknown_command(message: Message):
-    """Обработка неизвестных команд."""
+async def cmd_start_round(message: Message):
+    host = message.from_user.full_name or message.from_user.username
     await message.answer(
-        "🤔 Не понимаю эту команду.\n\n"
-        "Используйте `/help` для просмотра доступных команд.",
+        f"🎬 **Раунд запущен!**\n👑 **Ведущий:** {host}",
         parse_mode="Markdown"
+    )
+    ok = await send_random_situation_with_image(message.bot, message.chat.id)
+    if ok:
+        await message.answer("✅ Ситуация и изображение отправлены!", parse_mode="Markdown")
+    else:
+        await message.answer("⚠️ Ситуация без изображения отправлена.", parse_mode="Markdown")
+
+@router.callback_query(F.data == "start_round")
+async def cb_start_round(callback: CallbackQuery):
+    host = callback.from_user.full_name or callback.from_user.username
+    await callback.answer(show_alert=False)
+    await callback.message.answer(
+        f"🎬 **Раунд запущен!**\n👑 **Ведущий:** {host}",
+        parse_mode="Markdown"
+    )
+    ok = await send_random_situation_with_image(callback.bot, callback.message.chat.id)
+    if ok:
+        await callback.message.answer("✅ Ситуация и изображение отправлены!", parse_mode="Markdown")
+    else:
+        await callback.message.answer("⚠️ Ситуация без изображения отправлена.", parse_mode="Markdown")
+
+# Текстовые команды в чате без кнопок
+@router.message()
+async def unknown(message: Message):
+    await message.answer(
+        "Неизвестная команда.\n"
+        "Используйте /new_game, /join_game или /start_round.",
+        parse_mode="Markdown",
+        reply_markup=main_menu_kb()
     )
