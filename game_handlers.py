@@ -3,7 +3,7 @@ import asyncio
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from aiogram import Router, F, Bot
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
@@ -14,7 +14,7 @@ from aiogram.types import (
     FSInputFile,
 )
 from PIL import Image, ImageDraw, ImageFont
-import openai
+import json
 import os
 
 # =====================  НАСТРОЙКИ  =====================
@@ -34,6 +34,23 @@ if not openai.api_key:
 
 router = Router()
 
+# =====================  Загрузка из JSON =====================
+def load_json_list(filepath: str) -> List[str]:
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
+            else:
+                print(f"Ошибка: {filepath} должен содержать список")
+                return []
+    except Exception as e:
+        print(f"Не удалось загрузить {filepath}: {e}")
+        return []
+
+all_situations = load_json_list("situations.json")
+all_cards = load_json_list("cards.json")
+
 @dataclass
 class Answer:
     user_id: int
@@ -51,6 +68,8 @@ class GameState:
     answers: List[Answer] = field(default_factory=list)
     hands: Dict[int, List[str]] = field(default_factory=dict)
     deck: List[str] = field(default_factory=list)
+    used_situations: Set[str] = field(default_factory=set)
+    used_cards: Set[str] = field(default_factory=set)
 
     @property
     def player_ids(self) -> List[int]:
@@ -73,63 +92,25 @@ class GameState:
 
 GAMES: Dict[int, GameState] = {}
 
-def generate_situations_sync(count: int = 5) -> List[str]:
-    prompt = (
-        f"Сгенерируй {count} коротких забавных ситуаций для игры, "
-        f"каждая ситуация с пропуском '____'. Например:\n"
-        f'\"Самая странная причина опоздания: ____.\"\n'
-        f"Верни только шаблоны с пропусками, по одной на строку."
-    )
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
-            temperature=0.9,
-            n=1,
-        )
-        text = response.choices[0].message.content.strip()
-        situations = [line.strip("- \u2022\t ") for line in text.split("\n") if "____" in line]
-        return situations[:count] if situations else ["На вечеринке я неожиданно ____."]
-    except Exception as e:
-        print(f"Ошибка генерации ситуации: {e}")
-        return ["Ошибка генерации ситуации. Попробуйте позже."]
+def get_random_unused_situation(game: GameState) -> str:
+    unused = [s for s in all_situations if s not in game.used_situations]
+    if not unused:
+        game.used_situations.clear()
+        unused = all_situations.copy()
+    situation = random.choice(unused)
+    game.used_situations.add(situation)
+    return situation
 
-async def generate_situations_via_openai(count: int = 5) -> List[str]:
-    return await asyncio.to_thread(generate_situations_sync, count)
-
-def generate_cards_sync(count: int = 50) -> List[str]:
-    prompt = (
-        f"Сгенерируй {count} коротких смешных ответов для игры, "
-        f"каждый не длиннее трёх слов. Примеры: «моя мама», «запах гениталий», «утренний секс».\n"
-        f"Верни ответы списком по одному на строку без нумерации и тире."
-    )
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=800,
-            temperature=1.0,
-            n=1,
-        )
-        text = response.choices[0].message.content.strip()
-        cards = [line.strip("- \u2022\t0123456789.") for line in text.split("\n") if line.strip()]
-        return cards[:count] if cards else get_default_cards(count)
-    except Exception as e:
-        print(f"Ошибка генерации ответов: {e}")
-        return get_default_cards(count)
-
-def get_default_cards(count: int) -> List[str]:
-    default = [
-        "моя мама", "запах гениталий", "утренний секс", "пьяный енот", "квантовый скачок",
-        "мамкин борщ", "грязные носки", "бывший парень", "сломанный унитаз", "живот учителя"
-    ]
-    cards = default * (count // len(default) + 1)
-    random.shuffle(cards)
-    return cards[:count]
-
-async def generate_cards_via_openai(count: int = 50) -> List[str]:
-    return await asyncio.to_thread(generate_cards_sync, count)
+def get_deck_without_used(game: GameState, count: int = 50) -> List[str]:
+    available = [c for c in all_cards if c not in game.used_cards]
+    # Если карт осталось меньше, чем нужно, повторяем весь набор
+    if len(available) < count:
+        game.used_cards.clear()
+        available = all_cards.copy()
+    deck = random.sample(available, count)
+    for card in deck:
+        game.used_cards.add(card)
+    return deck
 
 def ensure_game(chat_id: int) -> GameState:
     return GAMES.setdefault(chat_id, GameState(chat_id=chat_id))
@@ -223,10 +204,8 @@ async def cmd_start_round(message: Message):
     game.round_no += 1
     game.answers.clear()
 
-    situations = await generate_situations_via_openai(5)
-    game.current_situation = random.choice(situations) if situations else "Не удалось сгенерировать ситуацию."
-
-    game.deck = await generate_cards_via_openai()
+    game.current_situation = get_random_unused_situation(game)
+    game.deck = get_deck_without_used(game)
     random.shuffle(game.deck)
 
     host_name = game.current_host_name()
