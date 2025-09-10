@@ -1,20 +1,16 @@
 from aiogram import Router, F, Bot
-from aiogram.filters import Command
-from aiogram.types import (
-    Message,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    CallbackQuery
-)
-import json
-import random
+from aiogram.filters import Command, CommandStart
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+import json, random
 from game_utils import gen, get_random_situation
 
 router = Router()
 HAND_SIZE = 10
+
+# Состояние игр
 GAMES = {}  # chat_id → { players, host_index, situation, hands, answers }
 
-# Загрузка колоды карт
+# Загрузка карт
 with open("cards.json", "r", encoding="utf-8") as f:
     ALL_CARDS = json.load(f)
 
@@ -27,6 +23,17 @@ def main_menu_kb() -> InlineKeyboardMarkup:
         ]]
     )
 
+@router.message(CommandStart())
+async def cmd_start(message: Message):
+    await message.answer(
+        "🎮 **Жесткая Игра**\n\n"
+        "/new_game — начать игру\n"
+        "/join_game — присоединиться к игре\n"
+        "/start_round — запустить новый раунд",
+        parse_mode="Markdown",
+        reply_markup=main_menu_kb()
+    )
+
 @router.message(Command("new_game"))
 async def cmd_new_game(message: Message):
     GAMES[message.chat.id] = {
@@ -36,10 +43,7 @@ async def cmd_new_game(message: Message):
         "hands": {},
         "answers": []
     }
-    await message.answer(
-        "✅ Игра начата! Игроки могут присоединиться командой /join_game или кнопкой ниже.",
-        reply_markup=main_menu_kb()
-    )
+    await message.answer("✅ Игра начата!", reply_markup=main_menu_kb())
 
 @router.callback_query(F.data == "new_game")
 async def cb_new_game(callback: CallbackQuery):
@@ -61,10 +65,7 @@ async def cmd_join_game(message: Message):
     uid = message.from_user.id
     if uid not in game["players"]:
         game["players"].append(uid)
-    await message.answer(
-        f"➕ {message.from_user.full_name} присоединился!",
-        reply_markup=main_menu_kb()
-    )
+    await message.answer(f"➕ {message.from_user.full_name} присоединился!", reply_markup=main_menu_kb())
 
 @router.callback_query(F.data == "join_game")
 async def cb_join_game(callback: CallbackQuery):
@@ -90,24 +91,25 @@ async def _start_round_logic(bot: Bot, chat_id: int, starter_id: int):
     game = GAMES.get(chat_id)
     if not game or not game["players"]:
         return await bot.send_message(chat_id, "Сначала /new_game и /join_game", reply_markup=main_menu_kb())
-    # Определяем ведущего по кругу
+
+    # Выбор ведущего по кругу
     idx = game["host_index"] % len(game["players"])
     host_id = game["players"][idx]
     game["host_index"] += 1
     game["answers"].clear()
     game["hands"].clear()
+
     # Ситуация
     situation = get_random_situation()
     game["situation"] = situation
     host_member = await bot.get_chat_member(chat_id, host_id)
     host_name = host_member.user.full_name
-    await bot.send_message(
-        chat_id,
-        f"🎬 Раунд начался! 👑 Ведущий: {host_name}\n\n🎲 {situation}"
-    )
-    # Генерируем и отправляем иллюстрацию ситуации
-    await gen.send_situation_with_image(bot, chat_id)
-    # Раздаём карты
+    await bot.send_message(chat_id, f"🎬 Раунд! 👑 Ведущий: {host_name}\n\n🎲 {situation}")
+
+    # Генерация и отправка иллюстрации только по ситуации
+    await gen.generate_and_send_image(bot, chat_id, situation)
+
+    # Раздача карт
     deck = ALL_CARDS.copy()
     random.shuffle(deck)
     for uid in game["players"]:
@@ -122,9 +124,9 @@ async def _start_round_logic(bot: Bot, chat_id: int, starter_id: int):
             ]
         )
         try:
-            await bot.send_message(uid, "Ваша рука — выберите карту-ответ:", reply_markup=kb)
+            await bot.send_message(uid, "🎴 Ваша рука — выберите карту-ответ:", reply_markup=kb)
         except:
-            pass  # Если бот не может написать в личку
+            pass
 
 @router.callback_query(F.data.startswith("ans:"))
 async def cb_answer(callback: CallbackQuery):
@@ -137,6 +139,7 @@ async def cb_answer(callback: CallbackQuery):
     host_idx = (game["host_index"] - 1) % len(game["players"])
     if uid == game["players"][host_idx]:
         return await callback.answer("Ведущий не отвечает.", show_alert=True)
+
     idx = int(callback.data.split(":", 1)[1])
     hand = game["hands"].get(uid, [])
     if idx < 0 or idx >= len(hand):
@@ -144,7 +147,8 @@ async def cb_answer(callback: CallbackQuery):
     card = hand.pop(idx)
     game["answers"].append((uid, card))
     await callback.answer(f"Вы выбрали: {card}")
-    # Если все ответили
+
+    # Когда все ответили
     if len(game["answers"]) >= len(game["players"]) - 1:
         text = "Ответы игроков:\n" + "\n".join(f"{i+1}. {c}" for i, (_, c) in enumerate(game["answers"]))
         kb = InlineKeyboardMarkup(
@@ -161,20 +165,19 @@ async def cb_pick(callback: CallbackQuery):
     game = GAMES.get(chat_id)
     if not game:
         return
-    # Только ведущий выбирает
     host_idx = (game["host_index"] - 1) % len(game["players"])
     host_id = game["players"][host_idx]
     if callback.from_user.id != host_id:
         return await callback.answer("Только ведущий может выбирать.", show_alert=True)
+
     idx = int(callback.data.split(":", 1)[1])
     uid, card = game["answers"][idx]
     winner_member = await callback.bot.get_chat_member(chat_id, uid)
     winner_name = winner_member.user.full_name
     await callback.message.edit_text(f"🏆 Победитель: {winner_name}\nОтвет: {card}")
-    # Генерация финальной иллюстрации
-    combined = f"{game['situation']} ____ {card}"
-    image_path = await gen.generate_image_from_situation(combined, f"round_{chat_id}")
-    if image_path:
-        await callback.bot.send_photo(chat_id, photo=image_path)
-    # Меню для нового раунда
+
+    # Генерация и отправка финальной иллюстрации по ситуации+ответу
+    await gen.generate_and_send_image(callback.bot, chat_id, game["situation"], card)
+
+    # Меню нового раунда
     await callback.bot.send_message(chat_id, "Используйте меню для нового раунда:", reply_markup=main_menu_kb())
