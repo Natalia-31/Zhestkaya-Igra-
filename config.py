@@ -1,16 +1,14 @@
-# Настройки игры
-GAME_SETTINGS = {
-    "max_players": 10,
-    "cards_per_hand": 10,
-    "round_timeout": 120,  # секунд
-    "min_players": 2,      # минимум 2 игрока
-}
+import os
+from dotenv import load_dotenv
 
-# Режимы контента
-CONTENT_MODES = {
-    "family_friendly": False,  # Лайтовая версия
-    "adult_mode": True         # Включить 18+
-}
+# Загружаем переменные из .env
+load_dotenv()
 
-# База данных (если понадобится в будущем)
-DATABASE_URL = "database/game.db"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_IDS = os.getenv("ADMIN_IDS")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+if not BOT_TOKEN:
+    raise RuntimeError("❌ BOT_TOKEN не найден в .env!")
+if not OPENAI_API_KEY:
+    raise RuntimeError("❌ OPENAI_API_KEY не найден в .env!")
