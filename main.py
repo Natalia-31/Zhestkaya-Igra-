@@ -1,34 +1,45 @@
-# main.py
 import asyncio
-import logging
 import os
-
+import logging
 from aiogram import Bot, Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from handlers import router  # Импорт вашего роутера
 
-from handlers.game_handlers import router as game_router
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 
 async def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(message)s",
-    )
-
-    telegram_token = os.getenv("TELEGRAM_TOKEN")
-    if not telegram_token:
-        print("Ошибка: не найден TELEGRAM_TOKEN")
+    # Получаем токен бота
+    bot_token = os.getenv("BOT_TOKEN")
+    if not bot_token:
+        print("❌ Ошибка: BOT_TOKEN не найден в переменных окружения!")
         return
-
-    bot = Bot(token=telegram_token)
-    dp = Dispatcher(storage=MemoryStorage())
-
-    dp.include_router(game_router)
-
-    print("Бот запущен...")
-    await dp.start_polling(bot)
+    
+    # Инициализация бота
+    bot = Bot(
+        token=bot_token, 
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
+    
+    # Диспетчер
+    dp = Dispatcher()
+    
+    # Подключаем роутеры
+    dp.include_router(router)
+    
+    print("🚀 Бот запускается...")
+    
+    try:
+        # Запускаем бота
+        await dp.start_polling(bot)
+    except Exception as e:
+        print(f"❌ Ошибка при запуске бота: {e}")
+    finally:
+        await bot.session.close()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        print("Бот остановлен.")
+    asyncio.run(main())
