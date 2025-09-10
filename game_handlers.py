@@ -1,9 +1,11 @@
+# handlers/game_handlers.py
+
 from aiogram import Router, F, Bot
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 import json, random
-from game_utils import gen, get_random_situation
 from aiogram.exceptions import TelegramBadRequest
+from game_utils import gen, get_random_situation
 
 router = Router()
 HAND_SIZE = 10
@@ -22,22 +24,27 @@ def main_menu_kb() -> InlineKeyboardMarkup:
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer(
-        "🎮 *Жесткая Игра*\n\n"
+        "🎮 Жесткая Игра\n\n"
         "/new_game — начать игру\n"
         "/join_game — присоединиться к игре\n"
         "/start_round — запустить новый раунд",
-        parse_mode="Markdown",
         reply_markup=main_menu_kb()
     )
 
 @router.message(Command("new_game"))
 async def cmd_new_game(message: Message):
-    GAMES[message.chat.id] = {"players": [], "host_index": 0, "situation": None, "hands": {}, "answers": []}
+    GAMES[message.chat.id] = {
+        "players": [], "host_index": 0,
+        "situation": None, "hands": {}, "answers": []
+    }
     await message.answer("✅ Игра начата!", reply_markup=main_menu_kb())
 
 @router.callback_query(F.data == "new_game")
 async def cb_new_game(callback: CallbackQuery):
-    GAMES[callback.message.chat.id] = {"players": [], "host_index": 0, "situation": None, "hands": {}, "answers": []}
+    GAMES[callback.message.chat.id] = {
+        "players": [], "host_index": 0,
+        "situation": None, "hands": {}, "answers": []
+    }
     await callback.answer("Игра начата!")
     try:
         await callback.message.edit_reply_markup(reply_markup=main_menu_kb())
@@ -93,7 +100,7 @@ async def _start_round_logic(bot: Bot, chat_id: int, starter_id: int):
     host_name = (await bot.get_chat_member(chat_id, host_id)).user.full_name
     await bot.send_message(chat_id, f"🎬 Раунд! 👑 Ведущий: {host_name}\n\n🎲 {situation}")
 
-    # Только картинка по ситуации
+    # Отправляем только картинку по ситуации
     await gen.generate_and_send_image(bot, chat_id, situation)
 
     deck = ALL_CARDS.copy(); random.shuffle(deck)
@@ -123,7 +130,7 @@ async def cb_answer(callback: CallbackQuery):
 
     idx = int(callback.data.split(":",1)[1])
     hand = game["hands"].get(uid, [])
-    if idx<0 or idx>=len(hand):
+    if idx < 0 or idx >= len(hand):
         return await callback.answer("Неверный выбор.", show_alert=True)
     card = hand.pop(idx)
     game["answers"].append((uid, card))
@@ -153,6 +160,6 @@ async def cb_pick(callback: CallbackQuery):
     winner_name = (await callback.bot.get_chat_member(chat_id, uid)).user.full_name
     await callback.message.edit_text(f"🏆 Победитель: {winner_name}\nОтвет: {card}")
 
-    # Финальная иллюстрация
+    # Генерация и отправка финальной иллюстрации по ситуации+ответу
     await gen.generate_and_send_image(callback.bot, chat_id, game["situation"], card)
     await callback.bot.send_message(chat_id, "Используйте меню для нового раунда:", reply_markup=main_menu_kb())
