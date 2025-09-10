@@ -16,6 +16,7 @@ from aiogram.types import (
 from PIL import Image, ImageDraw, ImageFont
 import json
 import os
+import openai  # <----- Добавлен импорт openai
 
 # =====================  НАСТРОЙКИ  =====================
 MIN_PLAYERS = 2
@@ -28,13 +29,12 @@ except NameError:
     BASE_DIR = Path(".").resolve()
 FONT_PATH = BASE_DIR / "arial.ttf"
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+openai.api_key = os.getenv("OPENAI_API_KEY")  # Убедитесь, что переменная окружения установлена
 if not openai.api_key:
     raise RuntimeError("OpenAI API ключ не найден! Установите OPENAI_API_KEY.")
 
 router = Router()
 
-# =====================  Загрузка из JSON =====================
 def load_json_list(filepath: str) -> List[str]:
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -103,7 +103,6 @@ def get_random_unused_situation(game: GameState) -> str:
 
 def get_deck_without_used(game: GameState, count: int = 50) -> List[str]:
     available = [c for c in all_cards if c not in game.used_cards]
-    # Если карт осталось меньше, чем нужно, повторяем весь набор
     if len(available) < count:
         game.used_cards.clear()
         available = all_cards.copy()
