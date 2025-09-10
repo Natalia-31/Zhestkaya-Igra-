@@ -8,7 +8,7 @@ from handlers import router
 async def main():
     token = os.getenv("BOT_TOKEN")
     if not token:
-        print("❌ BOT_TOKEN not set")
+        print("❌ BOT_TOKEN не задан")
         return
 
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
