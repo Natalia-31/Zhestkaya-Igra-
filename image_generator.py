@@ -1,10 +1,11 @@
-import  gemeni
+import openai
+import os
 
-GEMENI_API_KEY = "AIzaSyDbtW1LxZGHqcEcPhIWVcr8wHa3nVQ5Jjw"  # Не выкладывайте открыто!
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")   # ключ загрузится из перем. окружения
 
 async def generate_image(prompt):
-    gemeni.api_key = GEMENI_API_KEY
-    response =  gemeni.Image.create(
+    openai.api_key = OPENAI_API_KEY
+    response = openai.Image.create(
         prompt=prompt,
         n=1,
         size="512x512"
