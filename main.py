@@ -1,17 +1,29 @@
+# main.py
+
 import asyncio
 import os
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from handlers import router
+from dotenv import load_dotenv
+
+# Загружаем переменные из .env файла
+load_dotenv()
 
 async def main():
-    token = os.getenv("BOT_TOKEN")
-    if not token:
-        print("❌ BOT_TOKEN не задан")
+    # Получаем токены из загруженных переменных
+    bot_token = os.getenv("BOT_TOKEN")
+    google_api_key = os.getenv("GOOGLE_API_KEY")
+
+    # Проверяем, что оба ключа найдены
+    if not bot_token:
+        print("❌ BOT_TOKEN не найден. Убедитесь, что он есть в файле .env")
+        return
+    if not google_api_key:
+        print("❌ GOOGLE_API_KEY не найден. Убедитесь, что он есть в файле .env")
         return
 
-    bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(token=bot_token, parse_mode=ParseMode.HTML)
     dp = Dispatcher()
     dp.include_router(router)
 
@@ -20,3 +32,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
