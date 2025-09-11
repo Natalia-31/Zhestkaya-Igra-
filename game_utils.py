@@ -1,4 +1,4 @@
-# game_utils.py - ПОЛНАЯ ФИНАЛЬНАЯ ВЕРСИЯ
+# game_utils.py - ФИНАЛЬНАЯ ВЕРСИЯ С ПЕРЕВОДОМ НА АНГЛИЙСКИЙ
 
 import json
 import random
@@ -11,16 +11,18 @@ from urllib.parse import quote
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 
+# --- НОВАЯ ЗАВИСИМОСТЬ ДЛЯ ПЕРЕВОДА ---
+from googletrans import Translator
 
 class GameImageGenerator:
     def __init__(self, situations_file: str = "situations.json"):
         self.situations_file = situations_file
         self.situations = self._load_situations()
+        # --- СОЗДАЕМ ОБЪЕКТ ПЕРЕВОДЧИКА ---
+        self.translator = Translator()
 
     def _load_situations(self) -> list:
-        """
-        Загружает ситуации из JSON-файла.
-        """
+        # Этот метод не менялся
         try:
             with open(self.situations_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -28,7 +30,6 @@ class GameImageGenerator:
                 return data
         except Exception:
             pass
-        # Резервный список на случай, если файл не найден или пуст
         return [
             "На вечеринке я неожиданно ____.",
             "Самая странная причина опоздать: ____.",
@@ -36,22 +37,17 @@ class GameImageGenerator:
         ]
 
     def get_random_situation(self) -> str:
-        """
-        Возвращает случайную ситуацию из списка.
-        """
+        # Этот метод не менялся
         return random.choice(self.situations)
 
     async def generate_image_from_prompt(self, prompt: str) -> Optional[BytesIO]:
-        """
-        Генерирует изображение через URL-запрос к Pollinations.ai.
-        """
+        # Этот метод не менялся
         encoded_prompt = quote(prompt)
         image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024"
         
         print(f"🤖 Запрашиваю изображение по URL: {image_url}")
 
         try:
-            # Асинхронно скачиваем изображение
             async with aiohttp.ClientSession() as session:
                 async with session.get(image_url) as resp:
                     if resp.status == 200:
@@ -66,40 +62,45 @@ class GameImageGenerator:
             return None
 
     async def generate_and_send_image(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
-        """
-        Собирает промпт из ситуации и ответа, генерирует и отправляет изображение.
-        """
+        
+        # --- ↓↓↓ ФИНАЛЬНЫЙ ВАРИАНТ ПРОМПТА С ПЕРЕВОДОМ ↓↓↓ ---
         if answer:
-            # Создаем основной сюжет, заменяя прочерк ответом игрока
-            main_subject = situation.replace("____", answer)
+            # 1. Создаем русский сюжет
+            russian_subject = situation.replace("____", answer)
             
-            # Ключевые слова для фотореализма
+            # 2. Переводим его на английский
+            try:
+                loop = asyncio.get_event_loop()
+                translated = await loop.run_in_executor(None, self.translator.translate, russian_subject, "en")
+                english_subject = translated.text
+            except Exception as e:
+                print(f"❌ Ошибка перевода: {e}. Используем русский текст.")
+                english_subject = russian_subject
+
+            # 3. Добавляем английские усилители стиля
             style_keywords = "photorealistic, 8k resolution, cinematic lighting, highly detailed, professional photography, dslr, sharp focus"
             
-            prompt = f"{main_subject}, {style_keywords}"
+            # 4. Собираем финальный английский промпт
+            prompt = f"{english_subject}, {style_keywords}"
         else:
-            # Резервный вариант, если ответа нет
-            prompt = f"{situation}, photorealistic"
+            prompt = f"{situation}, photorealistic" # Резервный вариант
+        # --- ↑↑↑ КОНЕЦ ИЗМЕНЕНИЙ ПРОМПТА ↑↑↑ ---
 
-        # Получаем сгенерированное изображение в виде байтов
         image_bytes_io = await self.generate_image_from_prompt(prompt)
 
         if image_bytes_io:
-            # Отправляем фото в чат
             await bot.send_photo(
                 chat_id,
                 photo=BufferedInputFile(file=image_bytes_io.read(), filename="image.jpeg"),
-                caption=f"Промпт: {prompt}" # Подпись для отладки
+                caption=f"Промпт: {prompt}"
             )
             return True
 
-        # Если что-то пошло не так, отправляем сообщение об ошибке
         await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение. Похоже, музы взяли выходной.")
         return False
 
-# Глобальный экземпляр класса, который используется в других файлах
+# Глобальные экземпляры
 gen = GameImageGenerator()
 
-# Вспомогательная функция, чтобы другие файлы могли легко получить ситуацию
 def get_random_situation() -> str:
     return gen.get_random_situation()
