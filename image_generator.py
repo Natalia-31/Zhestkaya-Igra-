@@ -1,14 +1,15 @@
-import openai
-import os
+import pollinations
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")   # ключ загрузится из перем. окружения
+# Инициализируем модель для генерации изображений
+# Можно задать параметры по умолчанию, например, размеры
+image_model = pollinations.Image(width=1024, height=1024)
 
-async def generate_image(prompt):
-    openai.api_key = OPENAI_API_KEY
-    response = openai.Image.create(
-        prompt=prompt,
-        n=1,
-        size="512x512"
-    )
-    image_url = response["data"][0]["url"]
-    return image_url
+# Генерируем изображение по промпту
+# Метод __call__ возвращает объект изображения Pillow (PIL)
+prompt = "Рыцарь в сияющих доспехах сражается с огненным драконом в киберпанк-городе"
+image = image_model(prompt)
+
+# Сохраняем изображение в файл
+image.save("game_image.jpeg")
+
+print("Изображение 'game_image.jpeg' успешно создано!")
