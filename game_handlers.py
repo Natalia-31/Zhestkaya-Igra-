@@ -78,8 +78,8 @@ async def cb_start_round(callback: CallbackQuery):
 
 async def _start_round_logic(bot: Bot, chat_id: int):
     session = SESSIONS.get(chat_id)
-    if not session or len(session.players) < 2:
-        return await bot.send_message(chat_id, "Нужно минимум 2 игрока: /join_game", reply_markup=main_menu_kb())
+    if not session or len(session.players) < 1:
+        return await bot.send_message(chat_id, "Нужно минимум 1 игрока: /join_game", reply_markup=main_menu_kb())
 
     # Показываем список игроков
     mentions = [f"• {p['username']}" for p in session.players]
