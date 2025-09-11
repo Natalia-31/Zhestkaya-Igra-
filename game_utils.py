@@ -1,21 +1,35 @@
-import json, random, aiohttp, aiofiles, os
+# ИСПРАВЛЕННАЯ ВЕРСИЯ С POLLINATIONS.AI
+
+import json
+import random
+import asyncio
 from pathlib import Path
 from typing import Optional
-from openai import AsyncOpenAI # Используем асинхронный клиент
-from aiogram.types import FSInputFile
+from io import BytesIO
+
+# --- УДАЛЕНЫ импорты OpenAI и связанные с ним ---
+# import aiohttp, aiofiles, os
+# from openai import AsyncOpenAI
+# from aiogram.types import FSInputFile
+
+# +++ ДОБАВЛЕНЫ импорты для Pollinations и работы с памятью +++
+import pollinations
+from aiogram.types import InputFile
 from aiogram import Bot
 
-# Инициализируем клиент OpenAI с вашим ключом из переменных окружения
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# --- КЛАСС ПЕРЕПИСАН ДЛЯ РАБОТЫ С POLLINATIONS ---
 
 class GameImageGenerator:
-    def __init__(self, situations_file: str = "situations.json", images_dir: str = "generated_images"):
+    def __init__(self, situations_file: str = "situations.json"):
+        # Убрали images_dir, так как сохранять файлы больше не нужно
         self.situations_file = situations_file
-        self.images_dir = Path(images_dir)
-        self.images_dir.mkdir(exist_ok=True)
         self.situations = self._load_situations()
+        # Инициализируем модель pollinations один раз при создании объекта
+        self.image_model = pollinations.Image(width=1024, height=1024)
 
     def _load_situations(self) -> list:
+        # Этот метод остался без изменений
         try:
             with open(self.situations_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -30,58 +44,55 @@ class GameImageGenerator:
         ]
 
     def get_random_situation(self) -> str:
+        # Этот метод остался без изменений
         return random.choice(self.situations)
 
-    async def generate_image_from_prompt(self, prompt: str, image_id: Optional[str] = None) -> Optional[Path]:
-        if not client.api_key:
-            print("❌ OpenAI API ключ не найден.")
-            return None
+    async def generate_image_from_prompt(self, prompt: str) -> Optional[BytesIO]:
+        """
+        Генерирует изображение через Pollinations.ai и возвращает его в виде байтового объекта в памяти.
+        """
+        print(f"🤖 Pollinations: Начинаю генерацию для промпта: '{prompt}'")
         try:
-            # Новый синтаксис для генерации изображений
-            response = await client.images.generate(
-                model="dall-e-3", # или "dall-e-2"
-                prompt=prompt,
-                n=1,
-                size="1024x1024"
-            )
-            image_url = response.data[0].url
-        except Exception as e:
-            print(f"❌ Ошибка при генерации изображения OpenAI: {e}")
-            return None
+            # Запускаем синхронную библиотеку в асинхронном коде без блокировки
+            loop = asyncio.get_event_loop()
+            image = await loop.run_in_executor(None, self.image_model, prompt)
 
-        # Скачиваем изображение
-        output_path = self.images_dir / f"{image_id or random.randint(1000, 9999)}.png"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(image_url) as resp:
-                    if resp.status == 200:
-                        async with aiofiles.open(output_path, mode='wb') as f:
-                            await f.write(await resp.read())
-                        return output_path
+            # Сохраняем изображение в оперативную память
+            bio = BytesIO()
+            bio.name = 'image.jpeg'
+            image.save(bio, 'JPEG')
+            bio.seek(0)
+            print("✅ Pollinations: Изображение успешно сгенерировано в память.")
+            return bio
+
         except Exception as e:
-            print(f"❌ Ошибка при скачивании изображения: {e}")
+            print(f"❌ Pollinations: Ошибка при генерации изображения: {e}")
             return None
-        return None
 
     async def generate_and_send_image(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
+        # Этот метод остался почти без изменений, только промпт и способ отправки
         if answer:
             prompt = f"Ситуация: {situation}. Ответ игрока: {answer}. Мультяшная яркая иллюстрация в стиле мемов."
         else:
-            # Этот блок больше не используется, но оставлен для универсальности
             prompt = f"Ситуация: {situation}. Мультяшная яркая иллюстрация в стиле мемов."
 
-        image_path = await self.generate_image_from_prompt(prompt, f"round_{chat_id}")
-        if image_path:
-            await bot.send_photo(chat_id, photo=FSInputFile(image_path))
+        # Вызываем новый метод генерации
+        image_bytes = await self.generate_image_from_prompt(prompt)
+
+        if image_bytes:
+            # Отправляем фото из памяти (InputFile), а не с диска (FSInputFile)
+            await bot.send_photo(chat_id, photo=InputFile(image_bytes))
             return True
 
-        # Отправляем сообщение об ошибке только если генерация не удалась
-        await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение. Проверьте консоль на наличие ошибок.")
+        # Отправляем сообщение об ошибке, если генерация не удалась
+        await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение. Похоже, музы взяли выходной.")
         return False
+
+
+# --- ГЛОБАЛЬНЫЕ ЭКЗЕМПЛЯРЫ ОСТАЛИСЬ БЕЗ ИЗМЕНЕНИЙ ---
 
 # Глобальный экземпляр
 gen = GameImageGenerator()
 
 def get_random_situation() -> str:
     return gen.get_random_situation()
-
