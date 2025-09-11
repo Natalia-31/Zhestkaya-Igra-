@@ -1,106 +1,34 @@
-# game_utils.py - ФИНАЛЬНАЯ ВЕРСИЯ С ПЕРЕВОДОМ НА АНГЛИЙСКИЙ
+# Замените только этот метод в файле game_utils.py
 
-import json
-import random
-from typing import Optional
-from io import BytesIO
-import asyncio
-import aiohttp
-from urllib.parse import quote
-
-from aiogram import Bot
-from aiogram.types import BufferedInputFile
-
-# --- НОВАЯ ЗАВИСИМОСТЬ ДЛЯ ПЕРЕВОДА ---
-from googletrans import Translator
-
-class GameImageGenerator:
-    def __init__(self, situations_file: str = "situations.json"):
-        self.situations_file = situations_file
-        self.situations = self._load_situations()
-        # --- СОЗДАЕМ ОБЪЕКТ ПЕРЕВОДЧИКА ---
-        self.translator = Translator()
-
-    def _load_situations(self) -> list:
-        # Этот метод не менялся
+async def generate_and_send_image(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
+    if answer:
+        # 1. Переводим русский сюжет на английский
+        russian_subject = situation.replace("____", answer)
         try:
-            with open(self.situations_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list) and data:
-                return data
-        except Exception:
-            pass
-        return [
-            "На вечеринке я неожиданно ____.",
-            "Самая странная причина опоздать: ____.",
-            "Мой секретный талант — ____."
-        ]
-
-    def get_random_situation(self) -> str:
-        # Этот метод не менялся
-        return random.choice(self.situations)
-
-    async def generate_image_from_prompt(self, prompt: str) -> Optional[BytesIO]:
-        # Этот метод не менялся
-        encoded_prompt = quote(prompt)
-        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024"
-        
-        print(f"🤖 Запрашиваю изображение по URL: {image_url}")
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(image_url) as resp:
-                    if resp.status == 200:
-                        image_bytes = await resp.read()
-                        print("✅ Изображение успешно получено.")
-                        return BytesIO(image_bytes)
-                    else:
-                        print(f"❌ Ошибка от сервера Pollinations: статус {resp.status}")
-                        return None
+            loop = asyncio.get_event_loop()
+            translated = await loop.run_in_executor(None, self.translator.translate, russian_subject, "en")
+            english_subject = translated.text
         except Exception as e:
-            print(f"❌ Ошибка при скачивании изображения: {e}")
-            return None
+            print(f"❌ Ошибка перевода: {e}. Используем русский текст.")
+            english_subject = russian_subject
 
-    async def generate_and_send_image(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
-        
-        # --- ↓↓↓ ФИНАЛЬНЫЙ ВАРИАНТ ПРОМПТА С ПЕРЕВОДОМ ↓↓↓ ---
-        if answer:
-            # 1. Создаем русский сюжет
-            russian_subject = situation.replace("____", answer)
-            
-            # 2. Переводим его на английский
-            try:
-                loop = asyncio.get_event_loop()
-                translated = await loop.run_in_executor(None, self.translator.translate, russian_subject, "en")
-                english_subject = translated.text
-            except Exception as e:
-                print(f"❌ Ошибка перевода: {e}. Используем русский текст.")
-                english_subject = russian_subject
+        # 2. Формируем "перевернутый" промпт
+        # СНАЧАЛА стиль, ПОТОМ сюжет
+        style_keywords = "A photorealistic, 8k resolution, cinematic photo of"
+        prompt = f"{style_keywords} {english_subject}"
 
-            # 3. Добавляем английские усилители стиля
-            style_keywords = "photorealistic, 8k resolution, cinematic lighting, highly detailed, professional photography, dslr, sharp focus"
-            
-            # 4. Собираем финальный английский промпт
-            prompt = f"{english_subject}, {style_keywords}"
-        else:
-            prompt = f"{situation}, photorealistic" # Резервный вариант
-        # --- ↑↑↑ КОНЕЦ ИЗМЕНЕНИЙ ПРОМПТА ↑↑↑ ---
+    else:
+        prompt = f"A photorealistic photo of {situation}"
 
-        image_bytes_io = await self.generate_image_from_prompt(prompt)
+    image_bytes_io = await self.generate_image_from_prompt(prompt)
 
-        if image_bytes_io:
-            await bot.send_photo(
-                chat_id,
-                photo=BufferedInputFile(file=image_bytes_io.read(), filename="image.jpeg"),
-                caption=f"Промпт: {prompt}"
-            )
-            return True
+    if image_bytes_io:
+        await bot.send_photo(
+            chat_id,
+            photo=BufferedInputFile(file=image_bytes_io.read(), filename="image.jpeg"),
+            caption=f"Промпт: {prompt}"
+        )
+        return True
 
-        await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение. Похоже, музы взяли выходной.")
-        return False
-
-# Глобальные экземпляры
-gen = GameImageGenerator()
-
-def get_random_situation() -> str:
-    return gen.get_random_situation()
+    await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение. Похоже, музы взяли выходной.")
+    return False
