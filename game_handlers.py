@@ -1,8 +1,10 @@
+# handlers/game_handlers.py
+
 from aiogram import Router, F, Bot
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
-import json, random
+import json
 from game_utils import gen, get_random_situation
 from game_logic import GameSession
 
@@ -10,7 +12,8 @@ router = Router()
 with open("cards.json", "r", encoding="utf-8") as f:
     ALL_CARDS = json.load(f)
 
-SESSIONS = {}  # chat_id → GameSession
+# Хранилище сессий, ключ - ID группового чата
+SESSIONS = {}
 
 def main_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
@@ -81,7 +84,6 @@ async def _start_round_logic(bot: Bot, chat_id: int):
     if not session or len(session.players) < 2:
         return await bot.send_message(chat_id, "Нужно минимум 2 игрока: /join_game", reply_markup=main_menu_kb())
 
-    # Показываем список игроков
     mentions = [f"• {p['username']}" for p in session.players]
     await bot.send_message(chat_id, f"👥 Присоединились ({len(mentions)}):\n" + "\n".join(mentions))
 
@@ -90,56 +92,78 @@ async def _start_round_logic(bot: Bot, chat_id: int):
     situation = session.current_situation = get_random_situation()
     await bot.send_message(chat_id, f"🎬 Раунд! 👑 Ведущий: {host['username']}\n\n🎲 {situation}")
 
-    # Раздаём карты
     session.deal_hands(ALL_CARDS)
     for uid, hand in session.hands.items():
+        # ВАЖНО: передаем ID группового чата в callback_data
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=card, callback_data=f"ans:{i}")]
+            [InlineKeyboardButton(text=card, callback_data=f"ans:{chat_id}:{i}")]
             for i, card in enumerate(hand)
         ])
         try:
             await bot.send_message(uid, f"🎴 Ваша рука ({len(hand)} карт) — выберите карту-ответ:", reply_markup=kb)
-        except:
+        except Exception:
             pass
 
 @router.callback_query(F.data.startswith("ans:"))
-async def cb_answer(callback: CallbackQuery):
-    chat_id = callback.message.chat.id
-    session = SESSIONS.get(chat_id)
-    uid = callback.from_user.id
-    host_id = session.get_host()['user_id']
+async def cb_answer(callback: CallbackQuery, bot: Bot):
+    # Извлекаем ID группы и индекс карты из callback_data
+    _, group_chat_id_str, idx_str = callback.data.split(":")
+    group_chat_id = int(group_chat_id_str)
+    idx = int(idx_str)
 
-    if uid == host_id:
+    # Находим сессию по ID группы, а не личного чата
+    session = SESSIONS.get(group_chat_id)
+    if not session:
+        await callback.answer("Эта игровая сессия устарела или не найдена.", show_alert=True)
+        return
+
+    uid = callback.from_user.id
+    host = session.get_host()
+    if not host or uid == host['user_id']:
         return await callback.answer("Ведущий не отвечает.", show_alert=True)
 
-    idx = int(callback.data.split(":", 1)[1])
     hand = session.hands.get(uid, [])
-    if idx < 0 or idx >= len(hand):
+    if idx >= len(hand):
         return await callback.answer("Неверный выбор.", show_alert=True)
-    card = hand.pop(idx)
+
+    card = hand[idx]
     session.answers[uid] = card
     await callback.answer(f"Вы выбрали: {card}")
+    try:
+        await callback.message.edit_text(f"Вы выбрали карту:\n\n✅ *{card}*\n\nОжидаем других игроков...", parse_mode="Markdown")
+    except TelegramBadRequest: # Если сообщение не изменилось, ничего страшного
+        pass
 
     if session.all_answers_received():
-        answers = [session.answers[uid] for uid in session.answers]
-        player_names = [next(p['username'] for p in session.players if p['user_id'] == uid) for uid in session.answers]
-        text = "Ответы игроков:\n" + "\n".join(f"{i+1}. {player_names[i]} — {ans}" for i, ans in enumerate(answers))
+        answers_list = list(session.answers.values())
+        text = "Ответы игроков:\n" + "\n".join(f"{i+1}. {ans}" for i, ans in enumerate(answers_list))
+        
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=str(i+1), callback_data=f"pick:{i}")]
-            for i in range(len(answers))
+            [InlineKeyboardButton(text=str(i+1), callback_data=f"pick:{group_chat_id}:{i}")]
+            for i in range(len(answers_list))
         ])
-        await callback.bot.send_message(chat_id, text, reply_markup=kb)
+        # Отправляем сообщение в групповой чат
+        await bot.send_message(group_chat_id, text, reply_markup=kb)
 
 @router.callback_query(F.data.startswith("pick:"))
-async def cb_pick(callback: CallbackQuery):
-    chat_id = callback.message.chat.id
-    session = SESSIONS.get(chat_id)
-    host_id = session.get_host()['user_id']
-    if callback.from_user.id != host_id:
-        return await callback.answer("Только ведущий может выбирать.", show_alert=True)
-    idx = int(callback.data.split(":", 1)[1])
-    winner_info = session.pick_winner(idx)
-    await callback.message.edit_text(f"🏆 Победитель: {winner_info['username']}\nОтвет: {winner_info['answer']}")
+async def cb_pick(callback: CallbackQuery, bot: Bot):
+    # Извлекаем ID группы и индекс карты из callback_data
+    _, group_chat_id_str, idx_str = callback.data.split(":")
+    group_chat_id = int(group_chat_id_str)
+    idx = int(idx_str)
 
-    await gen.generate_and_send_image(callback.bot, chat_id, session.current_situation, winner_info["answer"])
-    await callback.bot.send_message(chat_id, "Используйте меню для нового раунда:", reply_markup=main_menu_kb())
+    session = SESSIONS.get(group_chat_id)
+    if not session:
+        await callback.answer("Сессия устарела.", show_alert=True)
+        return
+
+    host = session.get_host()
+    if not host or callback.from_user.id != host['user_id']:
+        return await callback.answer("Только ведущий может выбирать.", show_alert=True)
+
+    winner_info = session.pick_winner(idx)
+    if winner_info:
+        await callback.message.edit_text(f"🏆 Победитель: {winner_info['username']}\nОтвет: {winner_info['answer']}")
+        await gen.generate_and_send_image(bot, group_chat_id, session.current_situation, winner_info["answer"])
+    
+    await bot.send_message(group_chat_id, "Используйте меню для нового раунда:", reply_markup=main_menu_kb())
