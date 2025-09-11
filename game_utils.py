@@ -1,4 +1,4 @@
-# game_utils.py - ФИНАЛЬНАЯ ВЕРСИЯ
+# game_utils.py - ФИНАЛЬНАЯ ВЕРСИЯ С УЛУЧШЕННЫМ ПРОМПТОМ
 
 import json
 import random
@@ -9,7 +9,6 @@ import aiohttp
 from urllib.parse import quote
 
 from aiogram import Bot
-# --- ИЗМЕНЕНИЕ 1: ИМПОРТИРУЕМ ПРАВИЛЬНЫЙ КЛАСС ---
 from aiogram.types import BufferedInputFile
 
 
@@ -39,7 +38,7 @@ class GameImageGenerator:
         encoded_prompt = quote(prompt)
         image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024"
         
-        print(f"🤖 Запрашиваю изображение по URL: {image_url}")
+        print(f"🤖 Запраширую изображение по URL: {image_url}")
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -56,19 +55,26 @@ class GameImageGenerator:
             return None
 
     async def generate_and_send_image(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
+        
+        # --- ↓↓↓ ВОТ ВАШ ВЫБОР - ВАРИАНТ №3 ↓↓↓ ---
         if answer:
-            prompt = f"{situation}. {answer}. Мультяшная яркая иллюстрация."
+            # Формируем русскую основу
+            russian_prompt = f"{situation} {answer}"
+            # Добавляем английские "усилители" стиля
+            style_enhancers = "cinematic, vibrant colors, fun, cartoon, high detail, masterpiece, sharp focus"
+            prompt = f"{russian_prompt}, {style_enhancers}"
         else:
-            prompt = f"{situation}. Мультяшная яркая иллюстрация."
+            # Резервный вариант, если ответа нет
+            prompt = f"{situation}, {style_enhancers}"
+        # --- ↑↑↑ КОНЕЦ ИЗМЕНЕНИЙ ПРОМПТА ↑↑↑ ---
 
         image_bytes_io = await self.generate_image_from_prompt(prompt)
 
         if image_bytes_io:
-            # --- ИЗМЕНЕНИЕ 2: ИСПОЛЬЗУЕМ BufferedInputFile ---
-            # Мы читаем байты из объекта BytesIO и передаем их
             await bot.send_photo(
                 chat_id,
-                photo=BufferedInputFile(file=image_bytes_io.read(), filename="image.jpeg")
+                photo=BufferedInputFile(file=image_bytes_io.read(), filename="image.jpeg"),
+                caption=f"Промпт: {prompt}" # Добавил вывод промпта в подпись для удобства отладки
             )
             return True
 
@@ -80,3 +86,4 @@ gen = GameImageGenerator()
 
 def get_random_situation() -> str:
     return gen.get_random_situation()
+
