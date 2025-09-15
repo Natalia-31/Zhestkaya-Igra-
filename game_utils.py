@@ -1,67 +1,47 @@
-# game_utils.py - ВЕРСИЯ С ПЕРЕЗАГРУЗКОЙ
+# game_utils.py - ЧИСТАЯ ВЕРСИЯ
 
 import os
 import json
 import random
-from typing import Optional
-from io import BytesIO
-import asyncio
-import aiohttp
-from urllib.parse import quote
 
-from dotenv import load_dotenv
-from aiogram import Bot
-from aiogram.types import BufferedInputFile
+# --- Класс для управления колодами ---
+class DeckManager:
+    def __init__(self, situations_file="situations.json", answers_file="answers.json"):
+        self.situations = self._load_deck(situations_file)
+        self.answers = self._load_deck(answers_file)
 
-# ... (ваш код для create_prompt и загрузки API-ключей остается здесь) ...
-# Я его убрал для краткости, но он должен остаться в вашем файле
-
-class GameImageGenerator:
-    def __init__(self, situations_file="situations.json"):
-        self.situations_file = situations_file
-        # Убеждаемся, что путь к файлу правильный, относительно текущего скрипта
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.full_path_to_situations = os.path.join(base_dir, self.situations_file)
-        
-        self.situations = self._load_situations()
-
-    def _load_situations(self) -> list:
-        """Надежно загружает ситуации из файла."""
-        default_situations = ["Резервная ситуация: На вечеринке я неожиданно ____."]
+    def _load_deck(self, filename: str) -> list:
         try:
-            with open(self.full_path_to_situations, "r", encoding="utf-8") as f:
-                loaded_data = json.load(f)
-            
-            if isinstance(loaded_data, list) and loaded_data:
-                print(f"✅ Успешно загружено {len(loaded_data)} ситуаций.")
-                return loaded_data
-            else:
-                print("⚠️ Файл с ситуациями пуст. Используется резервный список.")
-                return default_situations
-                
-        except FileNotFoundError:
-             print(f"❌ Файл {self.situations_file} не найден. Используется резервный список.")
-             return default_situations
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            full_path = os.path.join(script_dir, filename)
+            with open(full_path, "r", encoding="utf-8") as f:
+                deck = json.load(f)
+            if isinstance(deck, list) and deck:
+                print(f"✅ Колода '{filename}' успешно загружена: {len(deck)} карт.")
+                return deck
+            return []
         except Exception as e:
-            print(f"❌ Ошибка при чтении файла: {e}. Используется резервный список.")
-            return default_situations
-
-    def reload_situations(self) -> int:
-        """Перезагружает ситуации из файла и возвращает их количество."""
-        self.situations = self._load_situations()
-        return len(self.situations)
+            # Теперь ошибка кодировки будет явно видна здесь
+            print(f"❌ ОШИБКА при загрузке '{filename}': {e}")
+            return []
 
     def get_random_situation(self) -> str:
-        """Возвращает случайную ситуацию из загруженного списка."""
-        if not self.situations:
-            # Эта проверка на всякий случай, если даже резервный список будет пустым
-            return "Резервная ситуация: На вечеринке я неожиданно ____."
-        return random.choice(self.situations)
+        return random.choice(self.situations) if self.situations else "Ситуации не найдены."
 
-    # ... (весь ваш код для генерации изображений _try_nanobanana, _try_horde и т.д. остается здесь) ...
+    def get_new_shuffled_answers_deck(self) -> list:
+        deck_copy = self.answers.copy()
+        random.shuffle(deck_copy)
+        return deck_copy
 
-# Глобальный экземпляр для доступа из других файлов
+# --- Класс для генерации изображений ---
+# Вставьте сюда ВЕСЬ ваш класс GameImageGenerator со всеми импортами для него
+# (aiohttp, BytesIO, load_dotenv, Bot, BufferedInputFile и т.д.)
+# Я его пока уберу, чтобы не загромождать ответ, но он должен быть здесь.
+class GameImageGenerator:
+    # ... Ваш полный класс для генерации изображений ...
+    pass
+
+# --- ГЛОБАЛЬНЫЕ ОБЪЕКТЫ ---
+# Создаем экземпляры, которые будут импортироваться в другие файлы
+decks = DeckManager()
 gen = GameImageGenerator()
-
-def get_random_situation() -> str:
-    return gen.get_random_situation()
