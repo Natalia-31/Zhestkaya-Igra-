@@ -1,4 +1,4 @@
-# game_utils.py — Полностью обновлённый с create_prompt и send_illustration без подписи
+# game_utils.py — Полностью обновлённый с create_prompt, _load_list и send_illustration без подписи
 
 import os
 import json
@@ -99,20 +99,33 @@ class DeckManager:
         self.answers: List[str] = self._load_list(self.ans_path, "answers")
 
     def _load_list(self, file_path: Path, label: str) -> List[str]:
-        for enc in ("utf-8", "utf-8-sig"):
+        # Выводим для отладки, существует ли файл и где он
+        print(f"🔍 Loading '{label}' from {file_path} (exists={file_path.exists()})")
+        for enc in ("utf-8-sig", "utf-8"):
             try:
                 with open(file_path, "r", encoding=enc) as f:
                     data = json.load(f)
                 if isinstance(data, list):
-                    print(f"✅ Колода '{label}' загружена ({enc}): {len(data)}")
+                    print(f"✅ Колода '{label}' загружена ({enc}): {len(data)} items")
                     return data
-            except Exception:
-                continue
-        print(f"⚠️ Не удалось загрузить {label} из {file_path}")
+                else:
+                    print(f"⚠️ {file_path} ({label}) не содержит JSON-список")
+                    return []
+            except FileNotFoundError:
+                print(f"❌ Файл не найден: {file_path}")
+                return []
+            except UnicodeDecodeError as e:
+                print(f"⚠️ Кодировка {enc} не подошла: {e}")
+            except json.JSONDecodeError as e:
+                print(f"❌ JSON ошибка ({enc}) в {file_path}: {e}")
+                return []
+            except Exception as e:
+                print(f"❌ Неожиданная ошибка ({enc}) при чтении {file_path}: {e}")
+        print(f"⚠️ Не удалось загрузить '{label}' из {file_path} ни с одной кодировкой")
         return []
 
     def get_random_situation(self) -> str:
-        return random.choice(self.situations) if self.situations else "На вечеринке я неожиданно ____."
+        return random.choice(self.situations) if self.situations else "Если бы не ____, я бы бросил пить."
 
     def get_new_shuffled_answers_deck(self) -> List[str]:
         deck = self.answers.copy()
@@ -143,7 +156,14 @@ class GameImageGenerator:
     async def _try_nanobanana(self, prompt: str) -> Optional[BytesIO]:
         if not self.nb_key:
             return None
-        payload = {"prompt": prompt, "model": "sdxl", "width": 512, "height": 512, "steps": 20, "cfg_scale": 7.0}
+        payload = {
+            "prompt": prompt,
+            "model": "sdxl",
+            "width": 512,
+            "height": 512,
+            "steps": 20,
+            "cfg_scale": 7.0
+        }
         headers = {"Authorization": f"Bearer {self.nb_key}", "Content-Type": "application/json"}
         try:
             async with aiohttp.ClientSession() as s:
