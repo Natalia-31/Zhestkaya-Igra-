@@ -1,0 +1,32 @@
+async def send_illustration(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
+    if not answer:
+        await bot.send_message(chat_id, "⚠️ Нет ответа для генерации изображения.")
+        return False
+        
+    prompt = create_prompt(situation, answer)
+    
+    # Добавляем негативный промпт для лучшего качества
+    negative_keywords = "blurry, low quality, text, watermark, signature, bad anatomy"
+    
+    tasks = [
+        self._try_pollinations(prompt),
+        self._try_nanobanana(prompt),
+    ]
+    
+    for future in asyncio.as_completed(tasks):
+        try:
+            result_image = await future
+            if result_image:
+                # Отправляем с более информативной подписью
+                caption = f"🎭 {situation.replace('____', answer)}"
+                await bot.send_photo(
+                    chat_id,
+                    photo=BufferedInputFile(file=result_image.read(), filename="game_scene.jpg"),
+                    caption=caption
+                )
+                return True
+        except Exception as e:
+            print(f"Ошибка генерации: {e}")
+    
+    await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение по вашей ситуации.")
+    return False
