@@ -1,4 +1,4 @@
-# handlers/game_handlers.py — исправлены callback с group_chat_id и синтаксические ошибки
+# handlers/game_handlers.py — обновлённая версия с фильтрацией ведущего
 
 from typing import Dict, Any
 from aiogram import Router, F, Bot
@@ -10,7 +10,6 @@ from game_utils import decks, gen
 
 router = Router()
 
-# Простая сессия по чату
 SESSIONS: Dict[int, Dict[str, Any]] = {}
 
 def main_menu() -> InlineKeyboardMarkup:
@@ -86,36 +85,37 @@ async def _start_round(bot: Bot, chat_id: int):
         await bot.send_message(chat_id, "Нужно минимум 2 игрока: нажмите «Присоединиться».", reply_markup=main_menu())
         return
 
-    # Сброс раунда
     st["answers"].clear()
     st["hands"].clear()
 
-    # Ведущий по кругу
     st["host_idx"] = (st["host_idx"] + 1) % len(st["players"])
     host = st["players"][st["host_idx"]]
+    host_id = host["user_id"]
 
-    # Ситуация из situations.json через DeckManager
     st["current_situation"] = decks.get_random_situation()
     await bot.send_message(chat_id, f"🎬 Раунд! 👑 Ведущий: {host['username']}\n\n🎲 {st['current_situation']}")
 
-    # Основная колода из answers.json + раздача по 10 карт
     st["main_deck"] = decks.get_new_shuffled_answers_deck()
     if not st["main_deck"]:
         await bot.send_message(chat_id, "⚠️ answers.json пуст — раздавать нечего.")
         return
 
+    # Раздаём по 10 карт каждому, кроме ведущего
     for p in st["players"]:
         uid = p["user_id"]
+        if uid == host_id:
+            continue
         hand = []
         while len(hand) < 10 and st["main_deck"]:
             hand.append(st["main_deck"].pop())
         st["hands"][uid] = hand
 
-    # Отправляем руки в ЛС инлайн-кнопками с group_chat_id
+    # Отправляем руки в ЛС инлайн-кнопками
     for p in st["players"]:
         uid = p["user_id"]
+        if uid == host_id:
+            continue
         hand = st["hands"].get(uid, [])
-        # ИСПРАВЛЕНИЕ: передаем group_chat_id в callback_data
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=card, callback_data=f"ans:{chat_id}:{uid}:{i}")]
             for i, card in enumerate(hand)
@@ -123,11 +123,10 @@ async def _start_round(bot: Bot, chat_id: int):
         try:
             await bot.send_message(uid, f"🎴 Ваша рука ({len(hand)} карт). Выберите ответ:", reply_markup=kb)
         except TelegramBadRequest as e:
-            await bot.send_message(chat_id, f"⚠️ Не могу написать {p['username']} ({uid}) в ЛС. Нажмите Start у бота. {e}")
+            await bot.send_message(chat_id, f"⚠️ Не могу написать {p['username']} ({uid}) в ЛС. {e}")
 
 @router.callback_query(F.data.startswith("ans:"))
 async def on_answer(cb: CallbackQuery):
-    # ИСПРАВЛЕНИЕ: формат ans:<group_chat_id>:<uid>:<idx>
     try:
         _, group_chat_id_str, uid_str, idx_str = cb.data.split(":")
         group_chat_id = int(group_chat_id_str)
@@ -137,15 +136,14 @@ async def on_answer(cb: CallbackQuery):
         await cb.answer("Некорректные данные.", show_alert=True)
         return
 
-    # ИСПРАВЛЕНИЕ: ищем сессию по group_chat_id
     st = SESSIONS.get(group_chat_id)
     if not st:
         await cb.answer("Игра не найдена.", show_alert=True)
         return
 
-    # Жать может только владелец руки
-    if cb.from_user.id != uid_from_btn:
-        await cb.answer("Это не ваша рука.", show_alert=True)
+    host_id = st["players"][st["host_idx"]]["user_id"]
+    if cb.from_user.id != uid_from_btn or uid_from_btn == host_id:
+        await cb.answer("Вы не можете отвечать.", show_alert=True)
         return
 
     hand = st["hands"].get(uid_from_btn, [])
@@ -157,9 +155,7 @@ async def on_answer(cb: CallbackQuery):
     st["answers"][uid_from_btn] = card
     await cb.answer(f"Вы выбрали: {card}")
 
-    # Если все, кроме ведущего, ответили — публикуем список
     players_ids = [p["user_id"] for p in st["players"]]
-    host_id = players_ids[st["host_idx"]]
     need_count = len(players_ids) - 1
     if len(st["answers"]) >= need_count:
         ordered = [(uid, st["answers"][uid]) for uid in st["answers"]]
@@ -168,14 +164,12 @@ async def on_answer(cb: CallbackQuery):
         for i, (uid, ans) in enumerate(ordered, start=1):
             uname = next(p["username"] for p in st["players"] if p["user_id"] == uid)
             lines.append(f"{i}. {uname} — {ans}")
-            # ИСПРАВЛЕНИЕ: передаем group_chat_id в callback для выбора победителя
             rows.append([InlineKeyboardButton(text=str(i), callback_data=f"pick:{group_chat_id}:{i-1}")])
         kb = InlineKeyboardMarkup(inline_keyboard=rows)
         await cb.bot.send_message(group_chat_id, "Ответы игроков:\n" + "\n".join(lines), reply_markup=kb)
 
 @router.callback_query(F.data.startswith("pick:"))
 async def on_pick(cb: CallbackQuery):
-    # ИСПРАВЛЕНИЕ: формат pick:<group_chat_id>:<idx>
     try:
         _, group_chat_id_str, idx_str = cb.data.split(":")
         group_chat_id = int(group_chat_id_str)
@@ -189,8 +183,7 @@ async def on_pick(cb: CallbackQuery):
         await cb.answer("Игра не найдена.", show_alert=True)
         return
 
-    players_ids = [p["user_id"] for p in st["players"]]
-    host_id = players_ids[st["host_idx"]]
+    host_id = st["players"][st["host_idx"]]["user_id"]
     if cb.from_user.id != host_id:
         await cb.answer("Только ведущий может выбрать.", show_alert=True)
         return
@@ -209,13 +202,13 @@ async def on_pick(cb: CallbackQuery):
         pass
     await cb.message.edit_text(f"🏆 Победитель: {win_name}\nОтвет: {win_answer}")
 
-    # Генерация изображения по ситуации и победившему ответу
     await gen.send_illustration(cb.bot, group_chat_id, st["current_situation"], win_answer)
 
-    # Добор по 1 карте каждому
+    # Добор по 1 карте всем, кроме ведущего
     for p in st["players"]:
         uid = p["user_id"]
-        # если колода исчерпана — перетасовать заново
+        if uid == host_id:
+            continue
         if not st["main_deck"]:
             st["main_deck"] = decks.get_new_shuffled_answers_deck()
             if not st["main_deck"]:
@@ -227,5 +220,4 @@ async def on_pick(cb: CallbackQuery):
         except TelegramBadRequest:
             pass
 
-    # ИСПРАВЛЕНИЕ: убраны проблемные кавычки с emoji
     await cb.bot.send_message(group_chat_id, "Раунд завершён. Нажмите «Новый раунд», чтобы продолжить.", reply_markup=main_menu())
