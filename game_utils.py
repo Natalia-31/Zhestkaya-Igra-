@@ -1,47 +1,106 @@
-# game_utils.py - ЧИСТАЯ ВЕРСИЯ
-
-import os
 import json
 import random
+import aiohttp
+import aiofiles
+from pathlib import Path
+from typing import List, Optional
+import openai
+from aiogram.types import FSInputFile
+from aiogram import Bot
+import os
 
-# --- Класс для управления колодами ---
-class DeckManager:
-    def __init__(self, situations_file="situations.json", answers_file="answers.json"):
-        self.situations = self._load_deck(situations_file)
-        self.answers = self._load_deck(answers_file)
+class GameImageGenerator:
+    def __init__(self,
+                 situations_file: str = "situations.json",
+                 images_dir: str = "generated_images"):
+        self.situations_file = situations_file
+        self.images_dir = Path(images_dir)
+        self.images_dir.mkdir(exist_ok=True)
+        self.situations = self._load_situations()
 
-    def _load_deck(self, filename: str) -> list:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if api_key:
+            try:
+                self.openai_client = openai.OpenAI(api_key=api_key)
+            except Exception:
+                self.openai_client = None
+                print("❌ Ошибка инициализации OpenAI клиента")
+        else:
+            self.openai_client = None
+            print("⚠️ OPENAI_API_KEY не найден — генерация изображений недоступна")
+
+    def _load_situations(self) -> List[str]:
         try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            full_path = os.path.join(script_dir, filename)
-            with open(full_path, "r", encoding="utf-8") as f:
-                deck = json.load(f)
-            if isinstance(deck, list) and deck:
-                print(f"✅ Колода '{filename}' успешно загружена: {len(deck)} карт.")
-                return deck
-            return []
-        except Exception as e:
-            # Теперь ошибка кодировки будет явно видна здесь
-            print(f"❌ ОШИБКА при загрузке '{filename}': {e}")
-            return []
+            with open(self.situations_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list) and data:
+                    return data
+        except Exception:
+            pass
+        # Резервные ситуации
+        return [
+            "На вечеринке я неожиданно ____.",
+            "Самая странная причина опоздать: ____.",
+            "Мой секретный талант — ____.",
+            "Лучшее оправдание для сна на работе: ____.",
+            "Самое нелепое происшествие в школе: ____."
+        ]
 
     def get_random_situation(self) -> str:
-        return random.choice(self.situations) if self.situations else "Ситуации не найдены."
+        return random.choice(self.situations)
 
-    def get_new_shuffled_answers_deck(self) -> list:
-        deck_copy = self.answers.copy()
-        random.shuffle(deck_copy)
-        return deck_copy
+    async def generate_image_from_situation(self,
+                                            situation: str,
+                                            situation_id: Optional[str] = None) -> Optional[Path]:
+        if not self.openai_client:
+            return None
+        prompt = (
+            situation.replace("____", "неожиданная ситуация") +
+            " — мультяшная, яркая иллюстрация"
+        )
+        try:
+            resp = self.openai_client.images.generate(
+                model="dall-e-3", prompt=prompt,
+                size="1024x1024", n=1)
+            url = resp.data[0].url
+        except Exception:
+            return None
 
-# --- Класс для генерации изображений ---
-# Вставьте сюда ВЕСЬ ваш класс GameImageGenerator со всеми импортами для него
-# (aiohttp, BytesIO, load_dotenv, Bot, BufferedInputFile и т.д.)
-# Я его пока уберу, чтобы не загромождать ответ, но он должен быть здесь.
-class GameImageGenerator:
-    # ... Ваш полный класс для генерации изображений ...
-    pass
+        filename = situation_id or f"situation_{random.randint(1000,9999)}"
+        out_path = self.images_dir / f"{filename}.png"
 
-# --- ГЛОБАЛЬНЫЕ ОБЪЕКТЫ ---
-# Создаем экземпляры, которые будут импортироваться в другие файлы
-decks = DeckManager()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as r:
+                    if r.status == 200:
+                        async with aiofiles.open(out_path, "wb") as f:
+                            async for chunk in r.content.iter_chunked(8192):
+                                await f.write(chunk)
+                        return out_path
+        except Exception:
+            return None
+
+        return None
+
+    async def send_situation_with_image(self,
+                                        bot: Bot,
+                                        chat_id: int) -> bool:
+        sit = self.get_random_situation()
+        await bot.send_message(chat_id, f"🎲 Ситуация:\n\n_{sit}_",
+                               parse_mode="Markdown")
+        img = await self.generate_image_from_situation(sit)
+        if img and img.exists():
+            await bot.send_photo(chat_id, photo=FSInputFile(img))
+            return True
+        else:
+            await bot.send_message(chat_id,
+                                   "⚠️ Не удалось сгенерировать изображение.")
+            return False
+
 gen = GameImageGenerator()
+
+async def send_random_situation_with_image(bot: Bot, chat_id: int) -> bool:
+    return await gen.send_situation_with_image(bot, chat_id)
+
+def get_random_situation() -> str:
+    return gen.get_random_situation()
