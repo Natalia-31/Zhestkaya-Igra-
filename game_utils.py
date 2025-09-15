@@ -1,47 +1,52 @@
-# game_utils.py — ситуации/ответы из JSON + генерация изображений без OpenAI (Pollinations → AI Horde → NanoBanana)
+# game_utils.py — ситуации/ответы из JSON + генерация изображений по HTTP (без сторонних SDK)
 
-import os
 import json
 import random
 from pathlib import Path
 from typing import List, Optional
 
-import asyncio
 import aiohttp
 import aiofiles
 from aiogram import Bot
 from aiogram.types import FSInputFile
 
+
 class DeckManager:
+    """
+    Загружает situations.json и answers.json (UTF-8 и UTF-8-SIG),
+    отдаёт случайную ситуацию и перемешанную колоду ответов.
+    """
     def __init__(self, situations_file: str = "situations.json", answers_file: str = "answers.json"):
         self.base_dir = Path(__file__).resolve().parent
         self.sit_path = (self.base_dir / situations_file).resolve()
         self.ans_path = (self.base_dir / answers_file).resolve()
+
         self.situations: List[str] = self._load_list(self.sit_path, "situations")
         self.answers: List[str] = self._load_list(self.ans_path, "answers")
 
     def _load_list(self, file_path: Path, label: str) -> List[str]:
+        # Пытаемся прочесть как UTF-8, затем как UTF-8-SIG (BOM)
         for enc in ("utf-8", "utf-8-sig"):
             try:
                 with open(file_path, "r", encoding=enc) as f:
-                    data = json.load(f)
+                    data = json.load(f)  # json.load на уже открытому файлу [14]
                 if isinstance(data, list):
-                    print(f"✅ Колода '{label}' загружена ({enc}): {len(data)} из {file_path}")
+                    print(f"✅ Колода '{label}' загружена ({enc}): {len(data)} из {file_path}")  # [17]
                     return data
                 else:
-                    print(f"⚠️ {file_path} ({label}) не список.")
+                    print(f"⚠️ {file_path} ({label}) не содержит JSON-список")
                     return []
             except FileNotFoundError:
                 print(f"❌ Файл не найден: {file_path} ({label})")
                 return []
             except UnicodeDecodeError as e:
-                print(f"⚠️ Кодировка {enc} не подошла: {e}, пробуем следующую…")
+                print(f"⚠️ Кодировка {enc} не подошла: {e} — пробуем следующую…")  # [20]
                 continue
             except json.JSONDecodeError as e:
-                print(f"❌ Ошибка JSON {file_path}: {e}")
+                print(f"❌ Ошибка JSON в {file_path} ({label}): {e}")  # [14]
                 return []
             except Exception as e:
-                print(f"❌ Неожиданная ошибка при чтении {file_path}: {e}")
+                print(f"❌ Неожиданная ошибка при чтении {file_path} ({label}): {e}")
                 return []
         return []
 
@@ -56,125 +61,40 @@ class DeckManager:
 
 class GameImageGenerator:
     """
-    Последовательно пробует провайдеры:
-      1) Pollinations (без ключа)
-      2) AI Horde (env: HORDE_API_KEY)
-      3) NanoBanana (env: NANOBANANA_API_KEY)
-    Возвращает первую успешно полученную картинку.
+    Генерация без OpenAI: скачиваем картинку по публичному URL (Pollinations).
+    Никаких import pollinations — только чистый HTTP через aiohttp.
     """
     def __init__(self, images_dir: str = "generated_images"):
         self.base_dir = Path(__file__).resolve().parent
         self.images_dir = (self.base_dir / images_dir).resolve()
         self.images_dir.mkdir(parents=True, exist_ok=True)
-
-        self.HORDE_API_KEY = os.getenv("HORDE_API_KEY", "")
-        self.NANOBANANA_API_KEY = os.getenv("NANOBANANA_API_KEY", "")
-        self.timeout = aiohttp.ClientTimeout(total=180)
-
-    async def send_illustration(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
-        prompt = self._build_prompt(situation, answer)
-        out = self.images_dir / f"img_{random.randint(1000,9999)}.png"
-
-        ok = await self._try_pollinations(prompt, out)
-        if not ok and self.HORDE_API_KEY:
-            ok = await self._try_horde(prompt, out)
-        if not ok and self.NANOBANANA_API_KEY:
-            ok = await self._try_nanobanana(prompt, out)
-
-        if ok and out.exists():
-            await bot.send_photo(chat_id, FSInputFile(out))
-            return True
-
-        await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение.")
-        return False
+        self.timeout = aiohttp.ClientTimeout(total=120)
 
     def _build_prompt(self, situation: str, answer: Optional[str]) -> str:
         base = situation.replace("____", answer or "неожиданный поворот")
-        # Короткий, устойчивый промпт
+        # Короткий стабильный промпт
         return f"{base}, cartoon, vibrant, colorful, high quality"
 
-    async def _try_pollinations(self, prompt: str, out_path: Path) -> bool:
+    async def send_illustration(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
         from urllib.parse import quote
-        url = f"https://image.pollinations.ai/prompt/{quote(prompt)}"
+        prompt = self._build_prompt(situation, answer)
+        url = f"https://image.pollinations.ai/prompt/{quote(prompt)}"  # прямой URL, без Python-пакета [5]
+
+        out_path = self.images_dir / f"img_{random.randint(1000,9999)}.png"
         try:
-            async with aiohttp.ClientSession(timeout=self.timeout) as s:
-                async with s.get(url) as r:
-                    if r.status == 200 and r.content_type.startswith("image/"):
+            async with aiohttp.ClientSession(timeout=self.timeout) as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200 and (resp.headers.get("Content-Type", "").startswith("image/")):
                         async with aiofiles.open(out_path, "wb") as f:
-                            async for chunk in r.content.iter_chunked(8192):
+                            async for chunk in resp.content.iter_chunked(8192):  # потоковая запись [3][9]
                                 await f.write(chunk)
+                        await bot.send_photo(chat_id, FSInputFile(out_path))  # отправка файла из FS [7][13]
                         return True
+                    else:
+                        print(f"⚠️ HTTP {resp.status} от генератора, content-type={resp.headers.get('Content-Type')}")
         except Exception as e:
-            print(f"⚠️ Pollinations: {e}")
-        return False
-
-    async def _try_horde(self, prompt: str, out_path: Path) -> bool:
-        # Примерный флоу AI Horde (Stable Horde). При необходимости адаптируйте под ваш аккаунт/эндвпоинт.
-        base = "https://stablehorde.net/api/v2"
-        headers = {"apikey": self.HORDE_API_KEY, "Content-Type": "application/json"}
-        payload = {
-            "prompt": prompt,
-            "params": {"width": 768, "height": 768, "sampler_name": "k_euler", "steps": 25}
-        }
-        try:
-            async with aiohttp.ClientSession(timeout=self.timeout) as s:
-                async with s.post(f"{base}/generate/async", json=payload, headers=headers) as r:
-                    if r.status != 202:
-                        return False
-                    data = await r.json()
-                    job_id = data.get("id")
-                    if not job_id:
-                        return False
-
-                # Опрос статуса
-                for _ in range(90):  # до ~3 минут
-                    await asyncio.sleep(2)
-                    async with aiohttp.ClientSession(timeout=self.timeout) as s2:
-                        async with s2.get(f"{base}/generate/status/{job_id}", headers=headers) as rr:
-                            if rr.status != 200:
-                                continue
-                            st = await rr.json()
-                            if st.get("done"):
-                                gens = st.get("generations") or []
-                                if not gens:
-                                    return False
-                                img_url = gens[0].get("img")
-                                if not img_url:
-                                    return False
-                                async with s2.get(img_url) as ir:
-                                    if ir.status == 200 and ir.content_type.startswith("image/"):
-                                        async with aiofiles.open(out_path, "wb") as f:
-                                            async for chunk in ir.content.iter_chunked(8192):
-                                                await f.write(chunk)
-                                        return True
-                return False
-        except Exception as e:
-            print(f"⚠️ AI Horde: {e}")
-            return False
-
-    async def _try_nanobanana(self, prompt: str, out_path: Path) -> bool:
-        # Шаблон под кастомный REST провайдер; замените URL/формат на свой.
-        url = "https://api.nanobanana.ai/v1/generate"
-        headers = {"Authorization": f"Bearer {self.NANOBANANA_API_KEY}", "Content-Type": "application/json"}
-        payload = {"prompt": prompt, "size": "1024x1024"}
-        try:
-            async with aiohttp.ClientSession(timeout=self.timeout) as s:
-                async with s.post(url, json=payload, headers=headers) as r:
-                    if r.status != 200:
-                        return False
-                    data = await r.json()
-                    img_url = data.get("url")
-                    if not img_url:
-                        return False
-            async with aiohttp.ClientSession(timeout=self.timeout) as s2:
-                async with s2.get(img_url) as ir:
-                    if ir.status == 200 and ir.content_type.startswith("image/"):
-                        async with aiofiles.open(out_path, "wb") as f:
-                            async for chunk in ir.content.iter_chunked(8192):
-                                await f.write(chunk)
-                        return True
-        except Exception as e:
-            print(f"⚠️ NanoBanana: {e}")
+            print(f"⚠️ Ошибка загрузки изображения: {e}")
+        await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение.")  # [13]
         return False
 
 
