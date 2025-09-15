@@ -1,4 +1,4 @@
-# game_utils.py
+# game_utils.py — Полностью обновлённый с create_prompt и send_illustration без подписи
 
 import os
 import json
@@ -9,17 +9,21 @@ from io import BytesIO
 import asyncio
 import aiohttp
 from urllib.parse import quote
+
 from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 
-# ===========================
-# ВСТАВЬТЕ СЮДА ФУНКЦИЮ create_prompt
-# ===========================
+# ========== Загрузка ключей ==========
+load_dotenv()
+NANO_API_KEY = os.getenv("NANO_API_KEY")
+HORDE_API_KEY = os.getenv("HORDE_API_KEY")
+REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
+
+# ========== Функция для создания промпта ==========
 def create_prompt(situation: str, answer: str) -> str:
     """Создает детальный промпт с контекстом для лучшей генерации."""
     translations = {
-        # ситуации
         "Меня взяли на работу, потому что я умею": "I got hired because I can",
         "Лучшее оправдание для сна на работе": "Best excuse for sleeping at work",
         "Если бы суперсила выбирала меня": "If I had a superpower it would be",
@@ -28,7 +32,6 @@ def create_prompt(situation: str, answer: str) -> str:
         "Мой секретный талант": "My secret talent",
         "То, что точно не стоит писать в резюме": "Something you should never put in your resume",
         "Главный кулинарный шедевр моего детства": "My greatest childhood cooking masterpiece",
-        # ответы
         "бесконечный запас пельменей": "infinite supply of dumplings",
         "говорящий кактус": "talking cactus",
         "очень злой хомяк": "very angry hamster",
@@ -59,7 +62,6 @@ def create_prompt(situation: str, answer: str) -> str:
         if ru in answer_en:
             answer_en = en
             break
-    # автоперевод, если остался русский
     if any(ord(c) > 127 for c in situation_en):
         try:
             from googletrans import Translator
@@ -74,17 +76,112 @@ def create_prompt(situation: str, answer: str) -> str:
             pass
     scene_description = f"{situation_en} {answer_en}"
     style_modifiers = [
-        "funny cartoon illustration", "humorous scene", "absurd comedy",
-        "whimsical digital art", "colorful and vibrant",
-        "comedic situation", "high quality illustration", "detailed funny scene"
+        "funny cartoon illustration",
+        "humorous scene",
+        "absurd comedy",
+        "whimsical digital art",
+        "colorful and vibrant",
+        "comedic situation",
+        "high quality illustration",
+        "detailed funny scene"
     ]
     final_prompt = f"{scene_description}, {', '.join(style_modifiers)}"
     print(f"📝 [Финальный промпт] {final_prompt}")
     return final_prompt
 
-# ===========================
-# ДАЛЕЕ — ваш существующий код:
-# DeckManager, GameImageGenerator и т.д.
-# в методе send_illustration используйте create_prompt:
-# prompt = create_prompt(situation, answer)
-# ===========================
+# ========== Менеджер колод ==========
+class DeckManager:
+    def __init__(self, situations_file: str = "situations.json", answers_file: str = "answers.json"):
+        self.base_dir = Path(__file__).resolve().parent
+        self.sit_path = (self.base_dir / situations_file).resolve()
+        self.ans_path = (self.base_dir / answers_file).resolve()
+        self.situations: List[str] = self._load_list(self.sit_path, "situations")
+        self.answers: List[str] = self._load_list(self.ans_path, "answers")
+
+    def _load_list(self, file_path: Path, label: str) -> List[str]:
+        for enc in ("utf-8", "utf-8-sig"):
+            try:
+                with open(file_path, "r", encoding=enc) as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    print(f"✅ Колода '{label}' загружена ({enc}): {len(data)}")
+                    return data
+            except Exception:
+                continue
+        print(f"⚠️ Не удалось загрузить {label} из {file_path}")
+        return []
+
+    def get_random_situation(self) -> str:
+        return random.choice(self.situations) if self.situations else "На вечеринке я неожиданно ____."
+
+    def get_new_shuffled_answers_deck(self) -> List[str]:
+        deck = self.answers.copy()
+        random.shuffle(deck)
+        return deck
+
+decks = DeckManager()
+
+# ========== Генератор изображений ==========
+class GameImageGenerator:
+    def __init__(self):
+        self.nb_key = NANO_API_KEY
+        self.nb_url = "https://api.nanobanana.ai/v1/generate"
+        self.horde_key = HORDE_API_KEY
+        self.horde_url = "https://aihorde.net/api/v2"
+
+    async def _try_pollinations(self, prompt: str) -> Optional[BytesIO]:
+        url = f"https://image.pollinations.ai/prompt/{quote(prompt)}?width=512&height=512"
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url, timeout=15) as r:
+                    if r.status == 200:
+                        return BytesIO(await r.read())
+        except:
+            pass
+        return None
+
+    async def _try_nanobanana(self, prompt: str) -> Optional[BytesIO]:
+        if not self.nb_key:
+            return None
+        payload = {"prompt": prompt, "model": "sdxl", "width": 512, "height": 512, "steps": 20, "cfg_scale": 7.0}
+        headers = {"Authorization": f"Bearer {self.nb_key}", "Content-Type": "application/json"}
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(self.nb_url, json=payload, headers=headers, timeout=40) as r:
+                    if r.status == 200:
+                        data = await r.json()
+                        img_url = data.get("image_url")
+                        if img_url:
+                            async with s.get(img_url, timeout=20) as ir:
+                                if ir.status == 200:
+                                    return BytesIO(await ir.read())
+        except:
+            pass
+        return None
+
+    async def send_illustration(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
+        if not answer:
+            await bot.send_message(chat_id, "⚠️ Нет ответа для генерации изображения.")
+            return False
+
+        prompt = create_prompt(situation, answer)
+        tasks = [
+            self._try_pollinations(prompt),
+            self._try_nanobanana(prompt),
+        ]
+        for future in asyncio.as_completed(tasks):
+            try:
+                img_buf = await future
+                if img_buf:
+                    await bot.send_photo(
+                        chat_id,
+                        photo=BufferedInputFile(file=img_buf.read(), filename="game_scene.jpg")
+                    )
+                    return True
+            except:
+                continue
+
+        await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение по вашей ситуации.")
+        return False
+
+gen = GameImageGenerator()
