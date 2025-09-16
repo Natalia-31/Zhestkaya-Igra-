@@ -1,5 +1,4 @@
 # game_utils.py — Полностью обновлённый с create_prompt, _load_list и send_illustration без подписи
-
 import os
 import json
 import random
@@ -9,17 +8,14 @@ from io import BytesIO
 import asyncio
 import aiohttp
 from urllib.parse import quote
-
 from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
-
 # ========== Загрузка ключей ==========
 load_dotenv()
 NANO_API_KEY = os.getenv("NANO_API_KEY")
 HORDE_API_KEY = os.getenv("HORDE_API_KEY")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
-
 # ========== Функция для создания промпта ==========
 def create_prompt(situation: str, answer: str) -> str:
     """Создает детальный промпт с контекстом для лучшей генерации."""
@@ -74,21 +70,22 @@ def create_prompt(situation: str, answer: str) -> str:
             answer_en = Translator().translate(answer_en, dest='en').text
         except:
             pass
-    scene_description = f"{situation_en} {answer_en}"
+    scene_description = f"A realistic photo showing {answer_en} in context of {situation_en}"
     style_modifiers = [
-        "funny cartoon illustration",
-        "humorous scene",
-        "absurd comedy",
-        "whimsical digital art",
-        "colorful and vibrant",
-        "comedic situation",
-        "high quality illustration",
-        "detailed funny scene"
+        "photorealistic",
+        "high quality photograph", 
+        "professional photography",
+        "sharp focus",
+        "natural lighting",
+        "realistic details",
+        "documentary style",
+        "candid moment",
+        "real life situation",
+        "authentic scene"
     ]
     final_prompt = f"{scene_description}, {', '.join(style_modifiers)}"
     print(f"📝 [Финальный промпт] {final_prompt}")
     return final_prompt
-
 # ========== Менеджер колод ==========
 class DeckManager:
     def __init__(self, situations_file: str = "situations.json", answers_file: str = "answers.json"):
@@ -97,7 +94,6 @@ class DeckManager:
         self.ans_path = (self.base_dir / answers_file).resolve()
         self.situations: List[str] = self._load_list(self.sit_path, "situations")
         self.answers: List[str] = self._load_list(self.ans_path, "answers")
-
     def _load_list(self, file_path: Path, label: str) -> List[str]:
         # Выводим для отладки, существует ли файл и где он
         print(f"🔍 Loading '{label}' from {file_path} (exists={file_path.exists()})")
@@ -123,17 +119,13 @@ class DeckManager:
                 print(f"❌ Неожиданная ошибка ({enc}) при чтении {file_path}: {e}")
         print(f"⚠️ Не удалось загрузить '{label}' из {file_path} ни с одной кодировкой")
         return []
-
     def get_random_situation(self) -> str:
         return random.choice(self.situations) if self.situations else "Если бы не ____, я бы бросил пить."
-
     def get_new_shuffled_answers_deck(self) -> List[str]:
         deck = self.answers.copy()
         random.shuffle(deck)
         return deck
-
 decks = DeckManager()
-
 # ========== Генератор изображений ==========
 class GameImageGenerator:
     def __init__(self):
@@ -141,7 +133,6 @@ class GameImageGenerator:
         self.nb_url = "https://api.nanobanana.ai/v1/generate"
         self.horde_key = HORDE_API_KEY
         self.horde_url = "https://aihorde.net/api/v2"
-
     async def _try_pollinations(self, prompt: str) -> Optional[BytesIO]:
         url = f"https://image.pollinations.ai/prompt/{quote(prompt)}?width=512&height=512"
         try:
@@ -152,7 +143,6 @@ class GameImageGenerator:
         except:
             pass
         return None
-
     async def _try_nanobanana(self, prompt: str) -> Optional[BytesIO]:
         if not self.nb_key:
             return None
@@ -178,12 +168,10 @@ class GameImageGenerator:
         except:
             pass
         return None
-
     async def send_illustration(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
         if not answer:
             await bot.send_message(chat_id, "⚠️ Нет ответа для генерации изображения.")
             return False
-
         prompt = create_prompt(situation, answer)
         tasks = [
             self._try_pollinations(prompt),
@@ -200,8 +188,6 @@ class GameImageGenerator:
                     return True
             except:
                 continue
-
         await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение по вашей ситуации.")
         return False
-
 gen = GameImageGenerator()
