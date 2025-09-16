@@ -226,59 +226,94 @@ class GameImageGenerator:
         return False
 
 # ========== Генератор видео ==========
-class GameVideoGenerator:
+class GameImageGenerator:
+    """
+    Ранее этот класс генерировал изображение. Теперь:
+    - пытается сгенерировать короткое видео по create_video_prompt через Hailuo (через video_gen),
+    - если видео не доступно — падает назад и пытается сделать статичную картинку
+      (pollinations -> nanobanana), и отправляет её с отметкой, что видео недоступно.
+    """
     def __init__(self):
-        self.hailuo_key = HAILUO_API_KEY
-        self.hailuo_url = "https://api.hailuoai.video/v1/generate"  # примерный URL
-        
-    async def _try_hailuo_video(self, prompt: str) -> Optional[str]:
-        """Генерирует видео через Hailuo AI."""
-        if not self.hailuo_key:
-            print("⚠️ Hailuo API key не найден")
-            return None
-            
+        self.nb_key = NANO_API_KEY
+        self.nb_url = "https://api.nanobanana.ai/v1/generate"
+        self.horde_key = HORDE_API_KEY
+        self.horde_url = "https://aihorde.net/api/v2"
+
+    async def _try_pollinations(self, prompt: str) -> Optional[BytesIO]:
+        url = f"https://image.pollinations.ai/prompt/{quote(prompt)}?width=512&height=512"
         try:
-            payload = {
-                "prompt": prompt,
-                "duration": 6,  # 6 секунд
-                "resolution": "720p",
-                "fps": 25,
-                "style": "cartoon"
-            }
-            
-            headers = {"Authorization": f"Bearer {self.hailuo_key}", "Content-Type": "application/json"}
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(self.hailuo_url, json=payload, headers=headers, timeout=120) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        video_url = data.get("video_url")
-                        print(f"✅ Видео сгенерировано: {video_url}")
-                        return video_url
-                    else:
-                        print(f"❌ Hailuo ошибка: {response.status}")
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url, timeout=15) as r:
+                    if r.status == 200:
+                        return BytesIO(await r.read())
         except Exception as e:
-            print(f"❌ Ошибка Hailuo: {e}")
+            print(f"⚠️ pollinations error: {e}")
         return None
-    
-    async def send_video_illustration(self, bot: Bot, chat_id: int, situation: str, answer: str) -> bool:
-        """Отправляет видео-иллюстрацию."""
-        # Создаём промпт для видео
+
+    async def _try_nanobanana(self, prompt: str) -> Optional[BytesIO]:
+        if not self.nb_key:
+            return None
+        payload = {
+            "prompt": prompt,
+            "model": "sdxl",
+            "width": 512,
+            "height": 512,
+            "steps": 20,
+            "cfg_scale": 7.0
+        }
+        headers = {"Authorization": f"Bearer {self.nb_key}", "Content-Type": "application/json"}
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(self.nb_url, json=payload, headers=headers, timeout=40) as r:
+                    if r.status == 200:
+                        data = await r.json()
+                        img_url = data.get("image_url")
+                        if img_url:
+                            async with s.get(img_url, timeout=20) as ir:
+                                if ir.status == 200:
+                                    return BytesIO(await ir.read())
+        except Exception as e:
+            print(f"⚠️ nanobanana error: {e}")
+        return None
+
+    async def send_illustration(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
+        """
+        Теперь основной путь:
+        1) Попробовать сгенерировать видео (через глобальный video_gen).
+        2) Если видео получилось — скачать и отправить.
+        3) Если видео не получилось — попытка сгенерировать изображение и отправить его с пометкой.
+        """
+        if not answer:
+            await bot.send_message(chat_id, "⚠️ Нет ответа для генерации медиа.")
+            return False
+
+        # Создаём промпт для видео (тот же, что и в GameVideoGenerator)
         video_prompt = create_video_prompt(situation, answer)
-        
-        # Генерируем видео
-        video_url = await self._try_hailuo_video(video_prompt)
-        
+
+        # Попытка сгенерировать видео через video_gen (глобальный экземпляр video_gen)
+        try:
+            # video_gen определён внизу модуля: video_gen = GameVideoGenerator()
+            video_url = None
+            if 'video_gen' in globals():
+                # Используем внутренний метод для получения URL (не отправляем повторно — сделаем отправку здесь)
+                video_url = await video_gen._try_hailuo_video(video_prompt)
+            else:
+                print("⚠️ Глобальный video_gen не найден — пропускаем видеогенерацию.")
+        except Exception as e:
+            print(f"❌ Ошибка при попытке видеогенерации: {e}")
+            video_url = None
+
+        # Если видео сгенерировано — скачиваем и отправляем
         if video_url:
             try:
-                # Скачиваем и отправляем видео
                 async with aiohttp.ClientSession() as session:
                     async with session.get(video_url, timeout=60) as response:
                         if response.status == 200:
-                            video_data = await response.read()
+                            video_bytes = await response.read()
+                            # Отправляем как video
                             await bot.send_video(
                                 chat_id,
-                                video=BufferedInputFile(file=video_data, filename="game_video.mp4"),
+                                video=BufferedInputFile(file=BytesIO(video_bytes), filename="game_video.mp4"),
                                 caption=f"🎬 {answer}",
                                 duration=6,
                                 width=720,
@@ -286,12 +321,40 @@ class GameVideoGenerator:
                             )
                             print(f"✅ Видео отправлено в чат {chat_id}")
                             return True
+                        else:
+                            print(f"❌ Ошибка скачивания видео: HTTP {response.status}")
             except Exception as e:
-                print(f"❌ Ошибка отправки видео: {e}")
-        
-        print("⚠️ Не удалось сгенерировать или отправить видео")
-        return False
+                print(f"❌ Ошибка при скачивании/отправке видео: {e}")
 
+        # --- Фолбэк: делаем статичную иллюстрацию, чтобы игра не ломалась ---
+        print("⚠️ Видео недоступно, пытаемся сгенерировать статичную иллюстрацию (fallback).")
+        prompt = create_prompt(situation, answer)
+        tasks = [
+            self._try_pollinations(prompt),
+            self._try_nanobanana(prompt),
+        ]
+        for future in asyncio.as_completed(tasks):
+            try:
+                img_buf = await future
+                if img_buf:
+                    # Отправляем изображение с пометкой, что видеоверсия недоступна
+                    try:
+                        await bot.send_photo(
+                            chat_id,
+                            photo=BufferedInputFile(file=BytesIO(img_buf.read()), filename="game_scene.jpg"),
+                            caption="⚠️ Не удалось сгенерировать видео — отправляю иллюстрацию."
+                        )
+                    except Exception:
+                        # некоторые версии aiogram принимают просто bytes/BytesIO
+                        await bot.send_photo(chat_id, photo=img_buf)
+                    return True
+            except Exception as e:
+                print(f"⚠️ Ошибка во время fallback-генерации изображения: {e}")
+                continue
+
+        # Если и изображение не получилось — уведомляем пользователя
+        await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать ни видео, ни изображение по вашей ситуации.")
+        return False
 # ========== Создаём экземпляры ==========
 gen = GameImageGenerator()
 video_gen = GameVideoGenerator()
