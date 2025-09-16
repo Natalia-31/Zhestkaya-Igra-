@@ -7,25 +7,35 @@ from aiogram.exceptions import TelegramBadRequest
 from game_utils import decks, gen, video_gen
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
+
 def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="▶️ Начать игру", callback_data="ui_new_game")],
         [InlineKeyboardButton(text="➕ Присоединиться", callback_data="ui_join_game")],
-        [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")],
+        [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")]
     ])
+
 @router.message(CommandStart())
 async def cmd_start(m: Message):
-    await m.answer("Жесткая Игра. Используйте меню.", reply_markup=main_menu())
+    print(f"🔄 Получена команда /start от {m.from_user.username}")
+    keyboard = main_menu()
+    print(f"📋 Клавиатура создана: {keyboard}")
+    await m.answer("Жесткая Игра. Используйте меню.", reply_markup=keyboard)
+    print(f"✅ Ответ отправлен")
+
 @router.message(Command("new_game"))
 async def cmd_new_game(m: Message):
     await _create_game(m.chat.id, m.from_user.id, m.from_user.full_name)
     await m.answer("✅ Игра начата!", reply_markup=main_menu())
+
 @router.message(Command("join_game"))
 async def cmd_join_game(m: Message, bot: Bot):
     await _join_flow(m.chat.id, m.from_user.id, m.from_user.full_name, bot, feedback=m)
+
 @router.message(Command("start_round"))
 async def cmd_start_round(m: Message):
     await _start_round(m.bot, m.chat.id)
+
 @router.callback_query(F.data == "ui_new_game")
 async def ui_new_game(cb: CallbackQuery):
     await _create_game(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name)
@@ -34,14 +44,17 @@ async def ui_new_game(cb: CallbackQuery):
         await cb.message.edit_text("✅ Игра начата!", reply_markup=main_menu())
     except TelegramBadRequest:
         pass
+
 @router.callback_query(F.data == "ui_join_game")
 async def ui_join_game(cb: CallbackQuery, bot: Bot):
     await _join_flow(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name, bot, feedback=cb.message)
     await cb.answer()
+
 @router.callback_query(F.data == "ui_start_round")
 async def ui_start_round(cb: CallbackQuery):
     await cb.answer()
     await _start_round(cb.bot, cb.message.chat.id)
+
 async def _create_game(chat_id: int, host_id: int, host_name: str):
     SESSIONS[chat_id] = {
         "players": [],            # [{user_id, username}]
@@ -52,6 +65,7 @@ async def _create_game(chat_id: int, host_id: int, host_name: str):
         "main_deck": [],          # ответы из answers.json
         "used_answers": []        # уже сыгранные ответы
     }
+
 async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedback: Message):
     st = SESSIONS.get(chat_id)
     if not st:
@@ -65,6 +79,7 @@ async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedb
             return
         st["players"].append({"user_id": user_id, "username": user_name})
     await feedback.answer(f"✅ Игроков: {len(st['players'])}", reply_markup=main_menu())
+
 async def _start_round(bot: Bot, chat_id: int):
     st = SESSIONS.get(chat_id)
     if not st or len(st["players"]) < 2:
@@ -110,6 +125,7 @@ async def _start_round(bot: Bot, chat_id: int):
             await bot.send_message(uid, message_text, reply_markup=kb)
         except TelegramBadRequest:
             await bot.send_message(chat_id, f"⚠️ Не могу написать игроку {p['username']}.")
+
 @router.callback_query(F.data.startswith("ans:"))
 async def on_answer(cb: CallbackQuery):
     _, group_chat_id_str, uid_str, idx_str = cb.data.split(":")
@@ -143,6 +159,7 @@ async def on_answer(cb: CallbackQuery):
             buttons.append([InlineKeyboardButton(text=str(i), callback_data=f"pick:{group_chat_id}:{i-1}")])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
         await cb.bot.send_message(group_chat_id, "Ответы игроков:\n" + "\n".join(lines), reply_markup=kb)
+
 @router.callback_query(F.data.startswith("pick:"))
 async def on_pick(cb: CallbackQuery):
     _, group_chat_id_str, idx_str = cb.data.split(":")
