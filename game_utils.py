@@ -1,4 +1,5 @@
-# game_utils.py — Полностью обновлённый с видеогенерацией через Pollo.ai
+# game_utils.py — Полностью обновлённый с видеогенерацией через Pollo.ai (ASCII-safe logs)
+
 import os
 import json
 import random
@@ -21,7 +22,8 @@ POLLO_API_KEY = os.getenv("POLLO_API_KEY")
 
 # ========== Функции для создания промптов ==========
 def create_prompt(situation: str, answer: str) -> str:
-    """Создает промпт для мультяшных изображений с контекстом."""
+    """Создает промпт для мультяшных изображений с контекстом (ASCII-safe)."""
+
     def translate_to_english(text: str) -> str:
         """Переводит текст на английский если содержит кириллицу."""
         if any(ord(c) > 127 for c in text):
@@ -31,42 +33,55 @@ def create_prompt(situation: str, answer: str) -> str:
                 result = translator.translate(text, dest='en').text
                 return result
             except Exception as e:
-                print(f"⚠️ Ошибка перевода: {e}")
+                print(f"[WARN] Translation error: {e}")
                 return text
         return text
+
     situation_clean = situation.replace("_____", "").replace("____", "").strip()
     situation_en = translate_to_english(situation_clean)
     answer_en = translate_to_english(answer.strip())
+
+    # Короткое контекстное описание: ситуация + ответ
     context_description = f"{situation_en} - {answer_en}"
+
     styles = ["cartoon", "caricature", "comic panel", "flat colors"]
     chosen_style = random.choice(styles)
+
     perspectives = ["wide shot", "close-up", "medium shot", "bird's eye view", "low angle"]
     chosen_perspective = random.choice(perspectives)
+
     emotions = ["amused expression", "surprised look", "confused face", "happy smile", "shocked expression", "thoughtful pose"]
     chosen_emotion = random.choice(emotions)
+
     final_prompt = f"{context_description}, {chosen_style}, {chosen_perspective}, {chosen_emotion}, colorful, simple shapes, expressive"
-    print(f"📝 [Ситуация] {situation}")
-    print(f"📝 [Ответ] {answer}")
-    print(f"📝 [Контекст] {context_description}")
-    print(f"📝 [Стиль] {chosen_style}")
-    print(f"📝 [Ракурс] {chosen_perspective}")
-    print(f"📝 [Эмоция] {chosen_emotion}")
-    print(f"📝 [Финальный промпт] {final_prompt}")
+
+    print(f"[INFO] Situation: {situation}")
+    print(f"[INFO] Answer: {answer}")
+    print(f"[INFO] Context: {context_description}")
+    print(f"[INFO] Style: {chosen_style}")
+    print(f"[INFO] Perspective: {chosen_perspective}")
+    print(f"[INFO] Emotion: {chosen_emotion}")
+    print(f"[INFO] Final prompt: {final_prompt}")
+
     return final_prompt
 
+
 def create_video_prompt(situation: str, answer: str) -> str:
-    """Создаёт промпт для видеогенерации."""
+    """Создаёт промпт для видеогенерации (ASCII-safe)."""
+
     def translate_to_english(text: str) -> str:
         if any(ord(c) > 127 for c in text):
             try:
                 from googletrans import Translator
                 return Translator().translate(text, dest='en').text
-            except:
+            except Exception:
                 return text
         return text
+
     situation_clean = situation.replace("_____", "").replace("____", "").strip()
     situation_en = translate_to_english(situation_clean)
     answer_en = translate_to_english(answer.strip())
+
     motion_scenarios = [
         f"Person interacting with {answer_en} while thinking about: {situation_en}",
         f"Dynamic scene showing {answer_en} in action, representing: {situation_en}",
@@ -75,10 +90,13 @@ def create_video_prompt(situation: str, answer: str) -> str:
         f"Humorous scene with {answer_en} solving problem: {situation_en}"
     ]
     chosen_scenario = random.choice(motion_scenarios)
+
     motion_styles = ["smooth animation", "bouncy movement", "dramatic zoom", "gentle pan", "dynamic rotation"]
     chosen_motion = random.choice(motion_styles)
+
     video_prompt = f"6-second cartoon video: {chosen_scenario}, {chosen_motion}, colorful, expressive characters, simple animation style"
-    print(f"🎬 [Видео промпт] {video_prompt}")
+
+    print(f"[INFO] Video prompt: {video_prompt}")
     return video_prompt
 
 # ========== Менеджер колод ==========
@@ -91,28 +109,28 @@ class DeckManager:
         self.answers: List[str] = self._load_list(self.ans_path, "answers")
 
     def _load_list(self, file_path: Path, label: str) -> List[str]:
-        print(f"🔍 Loading '{label}' from {file_path} (exists={file_path.exists()})")
+        print(f"[INFO] Loading '{label}' from {file_path} (exists={file_path.exists()})")
         for enc in ("utf-8-sig", "utf-8"):
             try:
                 with open(file_path, "r", encoding=enc) as f:
                     data = json.load(f)
                 if isinstance(data, list):
-                    print(f"✅ Колода '{label}' загружена ({enc}): {len(data)} items")
+                    print(f"[INFO] Deck '{label}' loaded ({enc}): {len(data)} items")
                     return data
                 else:
-                    print(f"⚠️ {file_path} ({label}) не содержит JSON-список")
+                    print(f"[WARN] {file_path} ({label}) is not a JSON list")
                     return []
             except FileNotFoundError:
-                print(f"❌ Файл не найден: {file_path}")
+                print(f"[ERROR] File not found: {file_path}")
                 return []
             except UnicodeDecodeError as e:
-                print(f"⚠️ Кодировка {enc} не подошла: {e}")
+                print(f"[WARN] Encoding {enc} failed: {e}")
             except json.JSONDecodeError as e:
-                print(f"❌ JSON ошибка ({enc}) в {file_path}: {e}")
+                print(f"[ERROR] JSON decode error ({enc}) in {file_path}: {e}")
                 return []
             except Exception as e:
-                print(f"❌ Неожиданная ошибка ({enc}) при чтении {file_path}: {e}")
-        print(f"⚠️ Не удалось загрузить '{label}' из {file_path} ни с одной кодировкой")
+                print(f"[ERROR] Unexpected error ({enc}) while reading {file_path}: {e}")
+        print(f"[WARN] Unable to load '{label}' from {file_path} with tried encodings")
         return []
 
     def get_random_situation(self) -> str:
@@ -120,8 +138,7 @@ class DeckManager:
 
     def get_new_shuffled_answers_deck(self) -> List[str]:
         deck = self.answers.copy()
-        random.shuffle(deck
-        )
+        random.shuffle(deck)
         return deck
 
 decks = DeckManager()
@@ -141,7 +158,7 @@ class GameImageGenerator:
                 async with s.get(url, timeout=15) as r:
                     if r.status == 200:
                         return BytesIO(await r.read())
-        except:
+        except Exception:
             pass
         return None
 
@@ -167,14 +184,15 @@ class GameImageGenerator:
                             async with s.get(img_url, timeout=20) as ir:
                                 if ir.status == 200:
                                     return BytesIO(await ir.read())
-        except:
+        except Exception:
             pass
         return None
 
     async def send_illustration(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
         if not answer:
-            await bot.send_message(chat_id, "⚠️ Нет ответа для генерации изображения.")
+            await bot.send_message(chat_id, "[WARN] Нет ответа для генерации изображения.")
             return False
+
         prompt = create_prompt(situation, answer)
         tasks = [
             self._try_pollinations(prompt),
@@ -189,9 +207,10 @@ class GameImageGenerator:
                         photo=BufferedInputFile(file=img_buf.read(), filename="game_scene.jpg")
                     )
                     return True
-            except:
+            except Exception:
                 continue
-        await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение по вашей ситуации.")
+
+        await bot.send_message(chat_id, "[WARN] Не удалось сгенерировать изображение по вашей ситуации.")
         return False
 
 # ========== Генератор видео через Pollo.ai ==========
@@ -201,27 +220,28 @@ class GameVideoGenerator:
         self.pollo_url = "https://pollo.ai/api/platform/generation/minimax/video-01"
 
     async def _try_pollo_video(self, prompt: str) -> Optional[str]:
-        """Генерирует видео через Pollo.ai API."""
+        """Генерирует видео через Pollo.ai API (ASCII-safe logs)."""
         if not self.pollo_key:
-            print("⚠️ Pollo API key не найден в .env файле")
+            print("[WARN] Pollo API key not found in .env")
             return None
         try:
             payload = {"input": {"prompt": prompt}}
             headers = {"Content-Type": "application/json", "x-api-key": self.pollo_key}
-            print("🎬 Отправляем запрос на генерацию видео...")
+            print("[INFO] Send video generation request...")
             async with aiohttp.ClientSession() as session:
                 # Запуск задачи
                 async with session.post(self.pollo_url, json=payload, headers=headers, timeout=60) as response:
                     txt = await response.text()
                     if response.status != 200:
-                        print(f"❌ Ошибка запроса: {response.status} - {txt}")
+                        print(f"[ERROR] Request error: {response.status} - {txt}")
                         return None
                     data = json.loads(txt)
                     task_id = data.get("taskId") or data.get("id")
-                    print(f"📝 Задача создана: {task_id}")
+                    print(f"[INFO] Task created: {task_id}")
                     if not task_id:
-                        print("❌ Не получен ID задачи")
+                        print("[ERROR] No task id returned")
                         return None
+
                 # Поллинг статуса
                 status_url = f"https://pollo.ai/api/platform/generation/{task_id}/status"
                 async with aiohttp.ClientSession() as session2:
@@ -230,64 +250,74 @@ class GameVideoGenerator:
                         async with session2.get(status_url, headers=headers, timeout=30) as status_response:
                             s_txt = await status_response.text()
                             if status_response.status != 200:
-                                print(f"⚠️ Ошибка статуса: {status_response.status} - {s_txt}")
+                                print(f"[WARN] Status error: {status_response.status} - {s_txt}")
                                 continue
                             status_data = json.loads(s_txt)
                             status = status_data.get("status") or status_data.get("state")
                             queue_pos = status_data.get("queuePosition")
-                            print(f"📊 Статус ({attempt + 1}/36): {status} | очередь: {queue_pos}")
+                            print(f"[INFO] Status ({attempt + 1}/36): {status} | queue: {queue_pos}")
+
                             if status in ("completed", "succeeded", "success"):
                                 video_url = None
+                                # Вариант 1: output.url
                                 output = status_data.get("output") or {}
                                 if isinstance(output, dict):
                                     video_url = output.get("url") or output.get("video_url")
+                                # Вариант 2: outputs (список)
                                 if not video_url:
                                     outputs = status_data.get("outputs") or status_data.get("result") or []
-                                    if isinstance(outputs, list) and outputs:
+                                    if isinstance(outputs, list):
                                         for item in outputs:
                                             if isinstance(item, dict):
                                                 video_url = item.get("url") or item.get("video_url")
                                                 if video_url:
                                                     break
+                                # Вариант 3: прямое поле
                                 if not video_url:
                                     video_url = status_data.get("url") or status_data.get("videoUrl")
-                                print(f"✅ Видео готово: {video_url}")
+
+                                print(f"[INFO] Video ready: {video_url}")
                                 return video_url
+
                             if status in ("failed", "error"):
-                                print("❌ Генерация видео не удалась")
+                                print("[ERROR] Video generation failed")
                                 return None
-                    print("⏰ Превышено время ожидания генерации")
+
+                    print("[WARN] Timeout while waiting for generation")
                     return None
+
         except Exception as e:
-            print(f"❌ Ошибка Pollo: {e}")
+            print(f"[ERROR] Pollo exception: {e}")
         return None
 
     async def send_video_illustration(self, bot: Bot, chat_id: int, situation: str, answer: str) -> bool:
-        """Отправляет видео-иллюстрацию."""
-        print(f"🎬 Начинаем генерацию видео для: {answer}")
+        """Отправляет видео-иллюстрацию (ASCII-safe logs)."""
+        print(f"[INFO] Start video generation for: {answer}")
         video_prompt = create_video_prompt(situation, answer)
         video_url = await self._try_pollo_video(video_prompt)
+
         if video_url:
             try:
-                print(f"📥 Скачиваем видео: {video_url}")
+                print(f"[INFO] Download video: {video_url}")
                 async with aiohttp.ClientSession() as session:
                     async with session.get(video_url, timeout=180) as response:
                         if response.status == 200:
                             video_data = await response.read()
-                            print(f"📤 Отправляем видео в чат {chat_id}")
+                            print(f"[INFO] Send video to chat {chat_id}")
                             await bot.send_video(
                                 chat_id,
                                 video=BufferedInputFile(file=video_data, filename="game_video.mp4"),
-                                caption=f"🎬 {answer}",
+                                caption=f"{answer}",
                                 duration=6
                             )
-                            print("✅ Видео отправлено успешно")
+                            print("[INFO] Video sent successfully")
                             return True
                         else:
-                            print(f"❌ Ошибка скачивания видео: {response.status}")
+                            print(f"[ERROR] Download video HTTP status: {response.status}")
             except Exception as e:
-                print(f"❌ Ошибка отправки видео: {e}")
-        print("⚠️ Не удалось сгенерировать или отправить видео")
+                print(f"[ERROR] Telegram send_video exception: {e}")
+
+        print("[WARN] Unable to generate or send video")
         return False
 
 # ========== Создаём экземпляры ==========
