@@ -18,73 +18,70 @@ HORDE_API_KEY = os.getenv("HORDE_API_KEY")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 # ========== Функция для создания промпта ==========
 def create_prompt(situation: str, answer: str) -> str:
-    """Создает детальный промпт с контекстом для лучшей генерации."""
-    translations = {
-        "Меня взяли на работу, потому что я умею": "I got hired because I can",
-        "Лучшее оправдание для сна на работе": "Best excuse for sleeping at work",
-        "Если бы суперсила выбирала меня": "If I had a superpower it would be",
-        "Самое нелепое происшествие в школе": "Most ridiculous thing that happened at school",
-        "Идеальный подарок на день рождения": "Perfect birthday gift",
-        "Мой секретный талант": "My secret talent",
-        "То, что точно не стоит писать в резюме": "Something you should never put in your resume",
-        "Главный кулинарный шедевр моего детства": "My greatest childhood cooking masterpiece",
-        "бесконечный запас пельменей": "infinite supply of dumplings",
-        "говорящий кактус": "talking cactus",
-        "очень злой хомяк": "very angry hamster",
-        "квантовый двигатель от жигулей": "quantum engine from old Russian car",
-        "армия боевых пингвинов": "army of combat penguins",
-        "потерянные носки": "lost socks from another dimension",
-        "секретная база на Луне": "secret moon base",
-        "грустный тромбон": "sad trombone",
-        "кибер-бабушка с лазерными глазами": "cyber grandma with laser eyes",
-        "дракон, работающий бухгалтером": "dragon working as accountant",
-        "невидимый велосипед": "invisible bicycle",
-        "портал в страну розовых пони": "portal to pink pony land",
-        "картофельное ополчение": "potato militia",
-        "забытый пароль от Вселенной": "forgotten password to the Universe",
-        "робот-пылесос, захвативший мир": "robot vacuum that conquered the world",
-        "философский камень": "philosopher's stone that turned out to be regular pebble",
-        "енот, ворующий мемы": "raccoon stealing memes",
-        "подозрительно умный голубь": "suspiciously smart pigeon",
-        "котенок, который случайно запустил ядерные ракеты": "kitten who accidentally launched nuclear missiles"
-    }
-    situation_en = situation.replace("____", "").strip()
-    for ru, en in translations.items():
-        if ru in situation_en:
-            situation_en = situation_en.replace(ru, en)
-            break
-    answer_en = answer.strip()
-    for ru, en in translations.items():
-        if ru in answer_en:
-            answer_en = en
-            break
-    if any(ord(c) > 127 for c in situation_en):
-        try:
-            from googletrans import Translator
-            situation_en = Translator().translate(situation_en, dest='en').text
-        except:
-            pass
-    if any(ord(c) > 127 for c in answer_en):
-        try:
-            from googletrans import Translator
-            answer_en = Translator().translate(answer_en, dest='en').text
-        except:
-            pass
-    scene_description = f"A realistic photo showing {answer_en} in context of {situation_en}"
+    """Создает детальный промпт для фотореалистичных изображений с автопереводом."""
+    
+    def translate_to_english(text: str) -> str:
+        """Переводит текст на английский если содержит кириллицу."""
+        if any(ord(c) > 127 for c in text):  # есть русские символы
+            try:
+                from googletrans import Translator
+                translator = Translator()
+                result = translator.translate(text, dest='en').text
+                return result
+            except Exception as e:
+                print(f"⚠️ Ошибка перевода: {e}")
+                return text  # возвращаем оригинал если перевод не удался
+        return text
+    
+    # Очищаем ситуацию от пропусков
+    situation_clean = situation.replace("_____", "").replace("____", "").strip()
+    
+    # Переводим на английский
+    situation_en = translate_to_english(situation_clean)
+    answer_en = translate_to_english(answer.strip())
+    
+    # Определяем обстановку для сцены
+    situation_lower = situation.lower()
+    if "утр" in situation_lower or "morning" in situation_en.lower():
+        scene_setting = "morning scene with natural sunlight"
+    elif "вечер" in situation_lower or "evening" in situation_en.lower():
+        scene_setting = "evening indoor scene with warm lighting"
+    elif "работ" in situation_lower or "офис" in situation_lower or "work" in situation_en.lower():
+        scene_setting = "office environment"
+    elif "дом" in situation_lower or "home" in situation_en.lower():
+        scene_setting = "cozy home interior"
+    elif "кухн" in situation_lower or "kitchen" in situation_en.lower():
+        scene_setting = "modern kitchen setting"
+    else:
+        scene_setting = "realistic everyday scene"
+    
+    # Создаём описание сцены
+    scene_description = f"Professional photograph of {answer_en} in {scene_setting}, related to: {situation_en}"
+    
+    # Стилевые модификаторы для фотореализма
     style_modifiers = [
         "photorealistic",
-        "high quality photograph", 
-        "professional photography",
+        "high quality photography", 
+        "professional lighting",
         "sharp focus",
-        "natural lighting",
+        "natural colors",
         "realistic details",
         "documentary style",
-        "candid moment",
-        "real life situation",
-        "authentic scene"
+        "authentic moment",
+        "clear composition",
+        "lifelike textures"
     ]
+    
+    # Финальный промпт
     final_prompt = f"{scene_description}, {', '.join(style_modifiers)}"
+    
+    # Отладочный вывод
+    print(f"📝 [Ситуация] {situation}")
+    print(f"📝 [Ответ] {answer}")
+    print(f"📝 [Перевод ситуации] {situation_en}")
+    print(f"📝 [Перевод ответа] {answer_en}")
     print(f"📝 [Финальный промпт] {final_prompt}")
+    
     return final_prompt
 # ========== Менеджер колод ==========
 class DeckManager:
