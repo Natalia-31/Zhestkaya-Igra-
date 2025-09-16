@@ -70,6 +70,9 @@ async def _start_round(bot: Bot, chat_id: int):
     if not st or len(st["players"]) < 2:
         await bot.send_message(chat_id, "Нужно минимум 2 игрока.", reply_markup=main_menu())
         return
+    
+    print(f"🎲 Начинаем раунд. Использованные карты: {len(st['used_answers'])}")
+    
     st["answers"].clear()
     st["hands"].clear()
     st["host_idx"] = (st["host_idx"] + 1) % len(st["players"])
@@ -165,22 +168,38 @@ async def on_pick(cb: CallbackQuery):
         pass
     await cb.message.edit_text(f"🏆 Победитель: {win_name}\nОтвет: {win_ans}")
     await gen.send_illustration(cb.bot, group_chat_id, st["current_situation"], win_ans)
-    # Добор карт
+    # Добор карт - улучшенная версия
     for p in st["players"]:
         uid2 = p["user_id"]
         if uid2 == host_id:
             continue
+        
+        # Обновляем колоду если нужно
         if not st["main_deck"]:
             full_deck = decks.get_new_shuffled_answers_deck()
             used = st["used_answers"]
-            in_hands = [c for hand in st["hands"].values() for c in hand]
-            st["main_deck"] = [c for c in full_deck if c not in used and c not in in_hands]
+            in_hands = [card for hand in st["hands"].values() for card in hand]
+            available_cards = [c for c in full_deck if c not in used and c not in in_hands]
+            st["main_deck"] = available_cards
+            print(f"🔄 Обновлена колода: {len(available_cards)} доступных карт")
+            
             if not st["main_deck"]:
+                print("⚠️ Нет доступных карт для добора")
                 continue
+        
         new_card = st["main_deck"].pop()
         st["hands"].setdefault(uid2, []).append(new_card)
+        
+        # Отправляем уведомление игроку
+        player_name = next((pl["username"] for pl in st["players"] if pl["user_id"] == uid2), "Игрок")
         try:
-            await cb.bot.send_message(uid2, f"Вы добрали карту: `{new_card}`", parse_mode="Markdown")
+            await cb.bot.send_message(
+                uid2, 
+                f"🎴 Вы добрали карту: **{new_card}**\n\nТеперь у вас {len(st['hands'][uid2])} карт.",
+                parse_mode="Markdown"
+            )
+            print(f"✅ {player_name} добрал карту: {new_card}")
         except TelegramBadRequest:
-            pass
+            print(f"❌ Не удалось отправить уведомление игроку {player_name}")
+    
     await cb.bot.send_message(group_chat_id, "Раунд завершён.", reply_markup=main_menu())
