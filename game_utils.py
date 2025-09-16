@@ -1,4 +1,5 @@
-# game_utils.py — Полностью обновлённый с create_prompt, _load_list и send_illustration без подписи
+# game_utils.py — Полностью обновлённый с улучшенной функцией create_prompt для мультяшных изображений
+
 import os
 import json
 import random
@@ -8,21 +9,24 @@ from io import BytesIO
 import asyncio
 import aiohttp
 from urllib.parse import quote
+
 from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
+
 # ========== Загрузка ключей ==========
 load_dotenv()
 NANO_API_KEY = os.getenv("NANO_API_KEY")
 HORDE_API_KEY = os.getenv("HORDE_API_KEY")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
+
 # ========== Функция для создания промпта ==========
 def create_prompt(situation: str, answer: str) -> str:
-    """Создает детальный промпт для фотореалистичных изображений с автопереводом."""
+    """Создает промпт для мультяшных изображений с контекстом."""
     
     def translate_to_english(text: str) -> str:
         """Переводит текст на английский если содержит кириллицу."""
-        if any(ord(c) > 127 for c in text):  # есть русские символы
+        if any(ord(c) > 127 for c in text):
             try:
                 from googletrans import Translator
                 translator = Translator()
@@ -30,59 +34,43 @@ def create_prompt(situation: str, answer: str) -> str:
                 return result
             except Exception as e:
                 print(f"⚠️ Ошибка перевода: {e}")
-                return text  # возвращаем оригинал если перевод не удался
+                return text
         return text
     
-    # Очищаем ситуацию от пропусков
+    # Переводим
     situation_clean = situation.replace("_____", "").replace("____", "").strip()
-    
-    # Переводим на английский
     situation_en = translate_to_english(situation_clean)
     answer_en = translate_to_english(answer.strip())
     
-    # Определяем обстановку для сцены
-    situation_lower = situation.lower()
-    if "утр" in situation_lower or "morning" in situation_en.lower():
-        scene_setting = "morning scene with natural sunlight"
-    elif "вечер" in situation_lower or "evening" in situation_en.lower():
-        scene_setting = "evening indoor scene with warm lighting"
-    elif "работ" in situation_lower or "офис" in situation_lower or "work" in situation_en.lower():
-        scene_setting = "office environment"
-    elif "дом" in situation_lower or "home" in situation_en.lower():
-        scene_setting = "cozy home interior"
-    elif "кухн" in situation_lower or "kitchen" in situation_en.lower():
-        scene_setting = "modern kitchen setting"
-    else:
-        scene_setting = "realistic everyday scene"
+    # Короткое контекстное описание: ситуация + ответ
+    context_description = f"{situation_en} - {answer_en}"
     
-    # Создаём описание сцены
-    scene_description = f"Professional photograph of {answer_en} in {scene_setting}, related to: {situation_en}"
+    # Стили для выбора
+    styles = ["cartoon", "caricature", "comic panel", "flat colors"]
+    chosen_style = random.choice(styles)
     
-    # Стилевые модификаторы для фотореализма
-    style_modifiers = [
-        "photorealistic",
-        "high quality photography", 
-        "professional lighting",
-        "sharp focus",
-        "natural colors",
-        "realistic details",
-        "documentary style",
-        "authentic moment",
-        "clear composition",
-        "lifelike textures"
-    ]
+    # Ракурсы/перспективы
+    perspectives = ["wide shot", "close-up", "medium shot", "bird's eye view", "low angle"]
+    chosen_perspective = random.choice(perspectives)
     
-    # Финальный промпт
-    final_prompt = f"{scene_description}, {', '.join(style_modifiers)}"
+    # Эмоции
+    emotions = ["amused expression", "surprised look", "confused face", "happy smile", "shocked expression", "thoughtful pose"]
+    chosen_emotion = random.choice(emotions)
+    
+    # Собираем финальный промпт
+    final_prompt = f"{context_description}, {chosen_style}, {chosen_perspective}, {chosen_emotion}, colorful, simple shapes, expressive"
     
     # Отладочный вывод
     print(f"📝 [Ситуация] {situation}")
     print(f"📝 [Ответ] {answer}")
-    print(f"📝 [Перевод ситуации] {situation_en}")
-    print(f"📝 [Перевод ответа] {answer_en}")
+    print(f"📝 [Контекст] {context_description}")
+    print(f"📝 [Стиль] {chosen_style}")
+    print(f"📝 [Ракурс] {chosen_perspective}")
+    print(f"📝 [Эмоция] {chosen_emotion}")
     print(f"📝 [Финальный промпт] {final_prompt}")
     
     return final_prompt
+
 # ========== Менеджер колод ==========
 class DeckManager:
     def __init__(self, situations_file: str = "situations.json", answers_file: str = "answers.json"):
@@ -91,6 +79,7 @@ class DeckManager:
         self.ans_path = (self.base_dir / answers_file).resolve()
         self.situations: List[str] = self._load_list(self.sit_path, "situations")
         self.answers: List[str] = self._load_list(self.ans_path, "answers")
+
     def _load_list(self, file_path: Path, label: str) -> List[str]:
         # Выводим для отладки, существует ли файл и где он
         print(f"🔍 Loading '{label}' from {file_path} (exists={file_path.exists()})")
@@ -116,13 +105,17 @@ class DeckManager:
                 print(f"❌ Неожиданная ошибка ({enc}) при чтении {file_path}: {e}")
         print(f"⚠️ Не удалось загрузить '{label}' из {file_path} ни с одной кодировкой")
         return []
+
     def get_random_situation(self) -> str:
         return random.choice(self.situations) if self.situations else "Если бы не ____, я бы бросил пить."
+
     def get_new_shuffled_answers_deck(self) -> List[str]:
         deck = self.answers.copy()
         random.shuffle(deck)
         return deck
+
 decks = DeckManager()
+
 # ========== Генератор изображений ==========
 class GameImageGenerator:
     def __init__(self):
@@ -130,6 +123,7 @@ class GameImageGenerator:
         self.nb_url = "https://api.nanobanana.ai/v1/generate"
         self.horde_key = HORDE_API_KEY
         self.horde_url = "https://aihorde.net/api/v2"
+
     async def _try_pollinations(self, prompt: str) -> Optional[BytesIO]:
         url = f"https://image.pollinations.ai/prompt/{quote(prompt)}?width=512&height=512"
         try:
@@ -140,6 +134,7 @@ class GameImageGenerator:
         except:
             pass
         return None
+
     async def _try_nanobanana(self, prompt: str) -> Optional[BytesIO]:
         if not self.nb_key:
             return None
@@ -165,10 +160,12 @@ class GameImageGenerator:
         except:
             pass
         return None
+
     async def send_illustration(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
         if not answer:
             await bot.send_message(chat_id, "⚠️ Нет ответа для генерации изображения.")
             return False
+
         prompt = create_prompt(situation, answer)
         tasks = [
             self._try_pollinations(prompt),
@@ -185,6 +182,8 @@ class GameImageGenerator:
                     return True
             except:
                 continue
+
         await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение по вашей ситуации.")
         return False
+
 gen = GameImageGenerator()
