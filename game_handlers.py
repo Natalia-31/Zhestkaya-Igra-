@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.filters import Command, CommandStart
 from aiogram.exceptions import TelegramBadRequest
 
-from game_utils import decks, gen, video_gen  # Добавлен video_gen
+from game_utils import decks, gen, video_gen  # video_gen для генерации видео
 
 router = Router()
 
@@ -20,7 +20,7 @@ def main_menu() -> InlineKeyboardMarkup:
 
 @router.message(CommandStart())
 async def cmd_start(m: Message):
-    print(f"User {m.from_user.id=} started the bot")
+    print(f"User {m.from_user.id} started bot")
     await m.answer("Жесткая Игра. Используйте меню.", reply_markup=main_menu())
 
 @router.message(Command("new_game"))
@@ -89,15 +89,15 @@ async def _start_round(bot: Bot, chat_id: int):
         await bot.send_message(chat_id, "Для игры нужно минимум 2 игрока.", reply_markup=main_menu())
         return
 
-    st["answers"] = {}
-    st["hands"] = {}
+    st["answers"].clear()
+    st["hands"].clear()
     st["host_idx"] = (st["host_idx"] + 1) % len(st["players"])
     st["current_situation"] = decks.get_random_situation()
     host = st["players"][st["host_idx"]]
 
     await bot.send_message(chat_id, f"Раунд начинается! Ведущий: {host['username']}\n\nСитуация:\n{st['current_situation']}")
 
-    full_deck = decks.get_new_shuffled_deck()
+    full_deck = decks.get_new_shuffled_answers_deck()
     st["main_deck"] = [card for card in full_deck if card not in st["used_answers"]]
 
     if not st["main_deck"]:
@@ -126,8 +126,8 @@ async def _start_round(bot: Bot, chat_id: int):
                 f"Раунд начался. Ситуация:\n{st['current_situation']}\nВыберите карту из руки:",
                 reply_markup=keyboard
             )
-        except TelegramBadRequest:
-            await bot.send_message(chat_id, f"Не могу отправить сообщение игроку {p['username']}.")
+        except TelegramBadRequest as e:
+            await bot.send_message(chat_id, f"⚠️ Не могу написать игроку {p['username']}. Ошибка: {e}")
 
 @router.callback_query(F.data.startswith("ans:"))
 async def handle_answer(cb: CallbackQuery):
@@ -138,14 +138,13 @@ async def handle_answer(cb: CallbackQuery):
     if not st:
         await cb.answer("Игра не найдена.", show_alert=True)
         return
-
     if cb.from_user.id != user_id:
         await cb.answer("Сейчас не ваша очередь.", show_alert=True)
         return
 
     hand = st["hands"].get(user_id, [])
     if card_idx < 0 or card_idx >= len(hand):
-        await cb.answer("Неправильный выбор.", show_alert=True)
+        await cb.answer("Неверный выбор карты.", show_alert=True)
         return
 
     card = hand.pop(card_idx)
@@ -157,11 +156,11 @@ async def handle_answer(cb: CallbackQuery):
     if len(st["answers"]) == len(st["players"]) - 1:
         answers_list = list(st["answers"].items())
         buttons = [
-            [InlineKeyboardButton(text=str(i+1), callback_data=f"pick:{chat_id}:{i}") for i in range(len(answers_list))]
+            [InlineKeyboardButton(text=str(i + 1), callback_data=f"pick:{chat_id}:{i}") for i in range(len(answers_list))]
         ]
         keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
         text = "\n".join(
-            f"{i+1}. {next(p['username'] for p in st['players'] if p['user_id']==uid)} — {ans}"
+            f"{i+1}. {next(p['username'] for p in st['players'] if p['user_id'] == uid)} — {ans}"
             for i, (uid, ans) in enumerate(answers_list)
         )
         await cb.message.answer(f"Ответы игроков:\n{text}", reply_markup=keyboard)
@@ -175,7 +174,6 @@ async def handle_pick(cb: CallbackQuery):
     if not st:
         await cb.answer("Игра не найдена.", show_alert=True)
         return
-
     if cb.from_user.id != st['players'][st['host_idx']]['user_id']:
         await cb.answer("Только ведущий может выбирать.", show_alert=True)
         return
@@ -195,31 +193,28 @@ async def handle_pick(cb: CallbackQuery):
 
     await cb.message.answer(f"Победитель: {winner_name}\nОтвет: {winner_answer}")
 
-    # Генерация иллюстрации и видео
+    # Генерация иллюстрации и видео победителя
     await gen.send_illustration(cb.bot, chat_id, st['current_situation'], winner_answer)
     await video_gen.send_video_illustration(cb.bot, chat_id, st['current_situation'], winner_answer)
 
-    # Добор карт
+    # Добор карт после раунда
     for p in st['players']:
         if p['user_id'] == st['players'][st['host_idx']]['user_id']:
             continue
-
         if not st['main_deck']:
             full_deck = decks.get_new_shuffled_deck()
             used = st['used_answers']
             in_hand = [card for hand in st['hands'].values() for card in hand]
             st['main_deck'] = [c for c in full_deck if c not in used and c not in in_hand]
-
             if not st['main_deck']:
-                await cb.message.answer("Карт для добора нет.")
+                await cb.message.answer("Карт для добора больше нет.")
                 return
-
         new_card = st['main_deck'].pop()
         st['hands'].setdefault(p['user_id'], []).append(new_card)
         try:
             await cb.bot.send_message(
                 p['user_id'],
-                f"Вы получили новую карту: {new_card}\nУ вас теперь {len(st['hands'][p['user_id']])} карт."
+                f"Вы получили новую карту: {new_card}\nКарт у вас теперь: {len(st['hands'][p['user_id']])}"
             )
         except TelegramBadRequest:
             pass
