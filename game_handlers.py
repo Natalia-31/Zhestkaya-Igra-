@@ -14,6 +14,7 @@ def main_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="▶️ Начать игру", callback_data="ui_new_game")],
         [InlineKeyboardButton(text="➕ Присоединиться", callback_data="ui_join_game")],
         [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="ui_scores")]  # NEW
     ])
 
 
@@ -38,6 +39,15 @@ async def cmd_start_round(m: Message):
     await _start_round(m.bot, m.chat.id)
 
 
+@router.message(Command("scores"))
+async def cmd_scores(m: Message):
+    st = SESSIONS.get(m.chat.id)
+    if not st:
+        await m.answer("Игра не найдена.", reply_markup=main_menu())
+        return
+    await m.answer(_format_scores(st), reply_markup=main_menu())
+
+
 @router.callback_query(F.data == "ui_new_game")
 async def ui_new_game(cb: CallbackQuery):
     await _create_game(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name)
@@ -60,6 +70,33 @@ async def ui_start_round(cb: CallbackQuery):
     await _start_round(cb.bot, cb.message.chat.id)
 
 
+@router.callback_query(F.data == "ui_scores")
+async def ui_scores(cb: CallbackQuery):
+    chat_id = cb.message.chat.id
+    st = SESSIONS.get(chat_id)
+    if not st:
+        await cb.answer("Игра не найдена.", show_alert=True)
+        return
+    await cb.answer()
+    await cb.message.answer(_format_scores(st), reply_markup=main_menu())
+
+
+def _format_scores(st: Dict[str, Any]) -> str:
+    if not st.get("players"):
+        return "Нет игроков."
+    scores = st.get("scores", {})
+    table = []
+    for p in st["players"]:
+        uid = p["user_id"]
+        pts = scores.get(uid, 0)
+        table.append((pts, p["username"]))
+    table.sort(reverse=True)  # по очкам убывание
+    lines = ["📊 Таблица очков:"]
+    for rank, (pts, name) in enumerate(table, 1):
+        lines.append(f"{rank}. {name} — {pts}")
+    return "\n".join(lines)
+
+
 async def _create_game(chat_id: int, host_id: int, host_name: str):
     SESSIONS[chat_id] = {
         "players": [],            # [{user_id, username}]
@@ -68,7 +105,8 @@ async def _create_game(chat_id: int, host_id: int, host_name: str):
         "host_idx": -1,
         "current_situation": None,
         "main_deck": [],          # ответы из answers.json
-        "used_answers": []        # уже сыгранные ответы
+        "used_answers": [],       # уже сыгранные ответы
+        "scores": {}              # NEW: очки игроков
     }
 
 
@@ -94,7 +132,7 @@ async def _start_round(bot: Bot, chat_id: int):
         return
 
     st["answers"].clear()
-    # не очищаем руки
+    # НЕ очищаем руки — сохраняем между раундами
     st["host_idx"] = (st["host_idx"] + 1) % len(st["players"])
     host = st["players"][st["host_idx"]]
     host_id = host["user_id"]
@@ -112,6 +150,7 @@ async def _start_round(bot: Bot, chat_id: int):
     if not st["main_deck"]:
         refill_main_deck()
 
+    # Инициализируем руки новых игроков и доводим руки до 10 у остальных
     for p in st["players"]:
         uid = p["user_id"]
         if uid == host_id:
@@ -220,12 +259,24 @@ async def on_pick(cb: CallbackQuery):
     if idx < 0 or idx >= len(ordered):
         await cb.answer("Неверный индекс.", show_alert=True)
         return
+
     win_uid, win_ans = ordered[idx]
     win_name = next(p["username"] for p in st["players"] if p["user_id"] == win_uid)
+
+    # Начисление очка победителю
+    st.setdefault("scores", {})
+    st["scores"][win_uid] = st["scores"].get(win_uid, 0) + 1
+
     try:
         await cb.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
         pass
+
     await cb.message.edit_text(f"🏆 Победитель: {win_name}\nОтвет: {win_ans}")
+
+    # Генерация видео к ситуации+ответу
     await video_gen.send_video_illustration(cb.bot, group_chat_id, st["current_situation"], win_ans)
+
+    # Показать текущую таблицу очков и завершить раунд
+    await cb.bot.send_message(group_chat_id, _format_scores(st))
     await cb.bot.send_message(group_chat_id, "Раунд завершён.", reply_markup=main_menu())
