@@ -1,16 +1,24 @@
 from typing import Dict, Any
 import asyncio
+import logging
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram.filters import Command, CommandStart
 from aiogram.exceptions import TelegramBadRequest
 from PIL import Image, ImageDraw, ImageFont
 from game_utils import decks, video_gen
+from gen import format_error, format_info, log_event
+
+# Настройка логирования
+logging.basicConfig(
+    filename="game_events.log",
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
-
-# —————— СТИЛИ ОФОРМЛЕНИЯ ——————
 
 def format_header(text: str, style: str = "main") -> str:
     styles = {
@@ -55,8 +63,6 @@ async def send_gray_card(chat_id: int, text: str, bot: Bot, filename: str = "car
     img.save(filename)
     await bot.send_photo(chat_id, photo=InputFile(filename))
 
-# ——————————————————————————————
-
 def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="▶️ Начать игру", callback_data="ui_new_game")],
@@ -66,12 +72,12 @@ def main_menu() -> InlineKeyboardMarkup:
 
 @router.message(CommandStart())
 async def cmd_start(m: Message):
-    await m.answer(format_header("Жесткая Игра"), reply_markup=main_menu())
+    await m.answer(format_info(format_header("Жесткая Игра")), reply_markup=main_menu())
 
 @router.message(Command("new_game"))
 async def cmd_new_game(m: Message):
     await _create_game(m.chat.id, m.from_user.id, m.from_user.full_name)
-    await m.answer(format_header("Игра начата!"), reply_markup=main_menu())
+    await m.answer(format_info("Игра начата!"), reply_markup=main_menu())
 
 @router.message(Command("join_game"))
 async def cmd_join_game(m: Message, bot: Bot):
@@ -86,7 +92,7 @@ async def ui_new_game(cb: CallbackQuery):
     await _create_game(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name)
     await cb.answer()
     try:
-        await cb.message.edit_text(format_header("Игра начата!"), reply_markup=main_menu())
+        await cb.message.edit_text(format_info("Игра начата!"), reply_markup=main_menu())
     except TelegramBadRequest:
         pass
 
@@ -111,25 +117,26 @@ async def _create_game(chat_id: int, host_id: int, host_name: str):
         "used_answers": [],
         "scores": {}
     }
+    log_event("GAME_CREATE", f"ChatID={chat_id}, Host={host_name}")
 
 async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedback: Message):
     st = SESSIONS.get(chat_id)
     if not st:
-        await feedback.answer(format_header("Сначала начните игру", style="warning"), reply_markup=main_menu())
+        await feedback.answer(format_error("Сначала начните игру"), reply_markup=main_menu())
         return
     if user_id not in [p["user_id"] for p in st["players"]]:
         try:
-            await bot.send_message(user_id, "Вы присоединились к игре! Ожидайте нового раунда.")
+            await bot.send_message(user_id, format_info("Вы присоединились к игре! Ожидайте нового раунда."))
         except TelegramBadRequest:
-            await feedback.answer(format_header(f"{user_name}, нажмите Старт у бота и повторите.", style="warning"))
+            await feedback.answer(format_error(f"{user_name}, нажмите Старт у бота и повторите."))
             return
         st["players"].append({"user_id": user_id, "username": user_name})
-    await feedback.answer(f"✅ Игроков: {len(st['players'])}", reply_markup=main_menu())
+    await feedback.answer(format_info(f"Игроков: {len(st['players'])}"), reply_markup=main_menu())
 
 async def _start_round(bot: Bot, chat_id: int):
     st = SESSIONS.get(chat_id)
     if not st or len(st["players"]) < 2:
-        await bot.send_message(chat_id, format_header("Нужно минимум 2 игрока", style="warning"), reply_markup=main_menu())
+        await bot.send_message(chat_id, format_error("Нужно минимум 2 игрока"), reply_markup=main_menu())
         return
 
     st["answers"].clear()
@@ -137,17 +144,15 @@ async def _start_round(bot: Bot, chat_id: int):
     st["host_idx"] = (st["host_idx"] + 1) % len(st["players"])
     host = st["players"][st["host_idx"]]
     st["current_situation"] = decks.get_random_situation()
+    log_event("ROUND_START", f"ChatID={chat_id}, Round={st['host_idx']+1}")
 
-    # отправляем ситуацию
     title = format_header(f"Раунд {st['host_idx']+1}", style="round")
     card = format_situation_card(st["current_situation"], st["host_idx"]+1)
     await send_gray_card(chat_id, f"{title}\n\n{card}", bot)
 
-    # готовим колоду
     full_deck = decks.get_new_shuffled_answers_deck()
     st["main_deck"] = [c for c in full_deck if c not in st["used_answers"]]
 
-    # раздаём
     for p in st["players"]:
         uid = p["user_id"]
         if uid == host["user_id"]:
@@ -157,7 +162,6 @@ async def _start_round(bot: Bot, chat_id: int):
             hand.append(st["main_deck"].pop())
         st["hands"][uid] = hand
 
-    # отправка карт с таймером
     for p in st["players"]:
         uid = p["user_id"]
         if uid == host["user_id"]:
@@ -177,7 +181,7 @@ async def _start_round(bot: Bot, chat_id: int):
                 except TelegramBadRequest:
                     break
         except TelegramBadRequest:
-            await bot.send_message(chat_id, f"⚠️ Не могу отправить {p['username']}")
+            await bot.send_message(chat_id, format_error(f"Не могу отправить {p['username']}"))
 
 @router.callback_query(F.data.startswith("ans:"))
 async def on_answer(cb: CallbackQuery):
@@ -185,23 +189,22 @@ async def on_answer(cb: CallbackQuery):
     chat_id, uid, idx = int(chat_id_str), int(uid_str), int(idx_str)
     st = SESSIONS.get(chat_id)
     if not st:
-        return await cb.answer(format_header("Игра не найдена", "warning"), show_alert=True)
+        return await cb.answer(format_error("Игра не найдена"), show_alert=True)
     host_id = st["players"][st["host_idx"]]["user_id"]
     if cb.from_user.id != uid or uid == host_id:
-        return await cb.answer(format_header("Вы не можете отвечать", "warning"), show_alert=True)
+        return await cb.answer(format_error("Вы не можете отвечать"), show_alert=True)
     hand = st["hands"][uid]
     if idx < 0 or idx >= len(hand):
-        return await cb.answer(format_header("Неверный выбор", "warning"), show_alert=True)
+        return await cb.answer(format_error("Неверный выбор"), show_alert=True)
 
     card = hand.pop(idx)
     st["answers"][uid] = card
     st["used_answers"].append(card)
-    await cb.answer(f"✅ Вы выбрали: {card}")
+    await cb.answer(format_info(f"Вы выбрали: {card}"))
 
     if len(st["answers"]) >= len(st["players"]) - 1:
         header = format_header("Ответы игроков", "main")
-        lines = []
-        buttons = []
+        lines, buttons = [], []
         for i, (uid2, ans) in enumerate(st["answers"].items(), 1):
             name = next(p["username"] for p in st["players"] if p["user_id"] == uid2)
             if uid2 == host_id:
@@ -210,7 +213,7 @@ async def on_answer(cb: CallbackQuery):
             buttons.append([InlineKeyboardButton(text=str(i), callback_data=f"pick:{chat_id}:{i-1}")])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
         await send_gray_card(chat_id, f"{header}\n\n" + "\n".join(lines), cb.bot)
-        await cb.bot.send_message(chat_id, "Выберите победителя:", reply_markup=kb)
+        await cb.bot.send_message(chat_id, format_info("Выберите победителя:"), reply_markup=kb)
 
 @router.callback_query(F.data.startswith("pick:"))
 async def on_pick(cb: CallbackQuery):
@@ -218,16 +221,16 @@ async def on_pick(cb: CallbackQuery):
     chat_id, idx = int(chat_id_str), int(idx_str)
     st = SESSIONS.get(chat_id)
     if not st:
-        return await cb.answer(format_header("Игра не найдена", "warning"), show_alert=True)
+        return await cb.answer(format_error("Игра не найдена"), show_alert=True)
     host_id = st["players"][st["host_idx"]]["user_id"]
     if cb.from_user.id != host_id:
-        return await cb.answer(format_header("Только ведущий может выбирать", "warning"), show_alert=True)
+        return await cb.answer(format_error("Только ведущий может выбирать"), show_alert=True)
 
     ordered = list(st["answers"].items())
     uid_win, win_ans = ordered[idx]
     win_name = next(p["username"] for p in st["players"] if p["user_id"] == uid_win)
-
     st["scores"][win_name] += 1
+    log_event("WINNER_PICK", f"ChatID={chat_id}, Winner={win_name}")
 
     result_header = format_header("Результат раунда", "result")
     result_text = f"{result_header}\n\n🏆 Победитель: {win_name}\nОтвет: {win_ans}"
@@ -236,7 +239,6 @@ async def on_pick(cb: CallbackQuery):
     progress = render_scores_ascii(st)
     await cb.bot.send_message(chat_id, progress)
 
-    # добор карт и завершение раунда
     for p in st["players"]:
         uid2 = p["user_id"]
         if uid2 == host_id:
@@ -250,8 +252,8 @@ async def on_pick(cb: CallbackQuery):
             new_card = st["main_deck"].pop()
             st["hands"].setdefault(uid2, []).append(new_card)
             try:
-                await cb.bot.send_message(uid2, f"🎴 Добрана карта: {new_card}\nУ вас {len(st['hands'][uid2])} карт.")
+                await cb.bot.send_message(uid2, format_info(f"Добрана карта: {new_card}\nУ вас {len(st['hands'][uid2])} карт."))
             except TelegramBadRequest:
                 pass
 
-    await cb.bot.send_message(chat_id, format_header("Раунд завершён"), reply_markup=main_menu())
+    await cb.bot.send_message(chat_id, format_info("Раунд завершён"), reply_markup=main_menu())
