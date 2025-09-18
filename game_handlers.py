@@ -5,6 +5,7 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram.filters import CommandStart
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.utils.chat import ChatMemberIterator
 from PIL import Image, ImageDraw, ImageFont
 from gen import format_error, format_info, log_event
 from game_utils import decks, video_gen
@@ -63,19 +64,25 @@ async def send_gray_card(chat_id: int, text: str, bot: Bot, filename: str = "car
     await bot.send_photo(chat_id, photo=InputFile(filename))
 
 def menu_initial() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ Начать игру", callback_data="ui_new_game")]
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="▶️ Начать игру", callback_data="ui_new_game")]
+        ]
+    )
 
 def menu_joinable() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Присоединиться", callback_data="ui_join_game")]
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Присоединиться", callback_data="ui_join_game")]
+        ]
+    )
 
 def menu_for_host() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")]
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")]
+        ]
+    )
 
 @router.message(CommandStart())
 async def cmd_start(m: Message):
@@ -90,9 +97,7 @@ async def ui_new_game(cb: CallbackQuery):
     await cb.answer()
     await cb.message.edit_reply_markup(reply_markup=None)
     await cb.message.answer(format_info("Игра начата!"))
-    # рассылаем меню «Присоединиться» всем членам чата
-    members = await cb.bot.get_chat_members(chat_id)
-    for member in members:
+    async for member in ChatMemberIterator(cb.bot, chat_id):
         user = member.user
         if user.is_bot:
             continue
@@ -103,7 +108,7 @@ async def ui_new_game(cb: CallbackQuery):
                 reply_markup=menu_joinable()
             )
         except TelegramBadRequest:
-            continue
+            pass
 
 @router.callback_query(F.data == "ui_join_game")
 async def ui_join_game(cb: CallbackQuery):
@@ -123,7 +128,7 @@ async def ui_start_round(cb: CallbackQuery):
     if cb.from_user.id != host_id:
         return await cb.message.answer(format_error("Только ведущий может начать раунд"))
     await cb.message.edit_reply_markup(reply_markup=None)
-    await cb.bot.send_message(host_id, format_info("Раунд начался!"), reply_markup=None)
+    await cb.bot.send_message(host_id, format_info("Раунд начался!"))
     await _start_round(cb.bot, chat_id)
 
 async def _create_game(chat_id: int, host_id: int, host_name: str):
@@ -152,10 +157,10 @@ async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedb
                 reply_markup=None
             )
         except TelegramBadRequest:
-            await feedback.answer(format_error("Невозможно отправить ЛС"), reply_markup=None)
+            await feedback.answer(format_error("Нельзя отправить ЛС"), reply_markup=None)
             return
         st["players"].append({"user_id": user_id, "username": user_name})
-    await feedback.answer(format_info(f"Игроков: {len(st['players'])}"), reply_markup=None)
+    await feedback.answer(format_info(f"Игроков: {len(st['players'])}"))
 
 async def _start_round(bot: Bot, chat_id: int):
     st = SESSIONS.get(chat_id)
@@ -189,10 +194,12 @@ async def _start_round(bot: Bot, chat_id: int):
         if uid == host["user_id"]:
             continue
         hand = st["hands"][uid]
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=str(i+1), callback_data=f"ans:{chat_id}:{uid}:{i}")]
-            for i in range(len(hand))
-        ])
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=str(i+1), callback_data=f"ans:{chat_id}:{uid}:{i}")] 
+                for i in range(len(hand))
+            ]
+        )
         text = f"{format_header('Ваша рука','main')}\n\n🎲 {st['current_situation']}\n\n🎴 У вас {len(hand)} карт."
         try:
             msg = await bot.send_message(uid, text, reply_markup=kb)
@@ -227,14 +234,14 @@ async def on_answer(cb: CallbackQuery):
     if len(st["answers"]) >= len(st["players"]) - 1:
         header = format_header("Ответы игроков","main")
         lines, buttons = [], []
-        for i, (uid2, ans) in enumerate(st["answers"].items(), 1):
+        for i,(uid2, ans) in enumerate(st["answers"].items(),1):
             name = next(p["username"] for p in st["players"] if p["user_id"] == uid2)
             if uid2 == host_id:
                 name = f"<b>{name}</b>"
             lines.append(f"{i}. {name} — {ans}")
             buttons.append([InlineKeyboardButton(text=str(i), callback_data=f"pick:{chat_id}:{i-1}")])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-        await send_gray_card(chat_id, f"{header}\n\n" + "\n".join(lines), cb.bot)
+        await send_gray_card(chat_id, f"{header}\n\n"+"\n".join(lines), cb.bot)
         await cb.bot.send_message(chat_id, format_info("Выберите победителя:"), reply_markup=kb)
 
 @router.callback_query(F.data.startswith("pick:"))
@@ -257,5 +264,4 @@ async def on_pick(cb: CallbackQuery):
     result_text = f"{result_header}\n\n🏆 Победитель: {win_name}\nОтвет: {win_ans}"
     await send_gray_card(chat_id, result_text, cb.bot)
     await cb.bot.send_message(chat_id, render_scores_ascii(st))
-
     await cb.bot.send_message(host_id, format_info("Готово к новому раунду"), reply_markup=menu_for_host())
