@@ -5,7 +5,7 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram.filters import CommandStart
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.utils.chat import ChatMemberIterator
+from aiogram.utils.chat_member import ChatMemberIterator
 from PIL import Image, ImageDraw, ImageFont
 from gen import format_error, format_info, log_event
 from game_utils import decks, video_gen
@@ -64,25 +64,19 @@ async def send_gray_card(chat_id: int, text: str, bot: Bot, filename: str = "car
     await bot.send_photo(chat_id, photo=InputFile(filename))
 
 def menu_initial() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="▶️ Начать игру", callback_data="ui_new_game")]
-        ]
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Начать игру", callback_data="ui_new_game")]
+    ])
 
 def menu_joinable() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Присоединиться", callback_data="ui_join_game")]
-        ]
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Присоединиться", callback_data="ui_join_game")]
+    ])
 
 def menu_for_host() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")]
-        ]
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")]
+    ])
 
 @router.message(CommandStart())
 async def cmd_start(m: Message):
@@ -133,14 +127,9 @@ async def ui_start_round(cb: CallbackQuery):
 
 async def _create_game(chat_id: int, host_id: int, host_name: str):
     SESSIONS[chat_id] = {
-        "players": [],
-        "hands": {},
-        "answers": {},
-        "host_idx": -1,
-        "current_situation": None,
-        "main_deck": [],
-        "used_answers": [],
-        "scores": {}
+        "players": [], "hands": {}, "answers": {},
+        "host_idx": -1, "current_situation": None,
+        "main_deck": [], "used_answers": [], "scores": {}
     }
     log_event("GAME_CREATE", f"ChatID={chat_id}, Host={host_name}")
 
@@ -157,7 +146,7 @@ async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedb
                 reply_markup=None
             )
         except TelegramBadRequest:
-            await feedback.answer(format_error("Нельзя отправить ЛС"), reply_markup=None)
+            await feedback.answer(format_error("Невозможно отправить ЛС"), reply_markup=None)
             return
         st["players"].append({"user_id": user_id, "username": user_name})
     await feedback.answer(format_info(f"Игроков: {len(st['players'])}"))
@@ -234,10 +223,9 @@ async def on_answer(cb: CallbackQuery):
     if len(st["answers"]) >= len(st["players"]) - 1:
         header = format_header("Ответы игроков","main")
         lines, buttons = [], []
-        for i,(uid2, ans) in enumerate(st["answers"].items(),1):
-            name = next(p["username"] for p in st["players"] if p["user_id"] == uid2)
-            if uid2 == host_id:
-                name = f"<b>{name}</b>"
+        for i,(uid2,ans) in enumerate(st["answers"].items(),1):
+            name = next(p["username"] for p in st["players"] if p["user_id"]==uid2)
+            if uid2==host_id: name=f"<b>{name}</b>"
             lines.append(f"{i}. {name} — {ans}")
             buttons.append([InlineKeyboardButton(text=str(i), callback_data=f"pick:{chat_id}:{i-1}")])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -256,7 +244,7 @@ async def on_pick(cb: CallbackQuery):
         return await cb.answer(format_error("Только ведущий может выбирать"), show_alert=True)
 
     uid_win, win_ans = list(st["answers"].items())[idx]
-    win_name = next(p["username"] for p in st["players"] if p["user_id"] == uid_win)
+    win_name = next(p["username"] for p in st["players"] if p["user_id"]==uid_win)
     st["scores"][win_name] += 1
     log_event("WINNER_PICK", f"ChatID={chat_id}, Winner={win_name}")
 
