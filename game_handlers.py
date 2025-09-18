@@ -62,11 +62,14 @@ async def send_gray_card(chat_id: int, text: str, bot: Bot, filename: str = "car
     img.save(filename)
     await bot.send_photo(chat_id, photo=InputFile(filename))
 
-def main_menu() -> InlineKeyboardMarkup:
+def menu_initial() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="▶️ Начать игру", callback_data="ui_new_game")],
+    ])
+
+def menu_joinable() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Присоединиться", callback_data="ui_join_game")],
-        [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")],
     ])
 
 def menu_for_host() -> InlineKeyboardMarkup:
@@ -76,14 +79,14 @@ def menu_for_host() -> InlineKeyboardMarkup:
 
 @router.message(CommandStart())
 async def cmd_start(m: Message):
-    await m.answer(format_info(format_header("Жесткая Игра")), reply_markup=main_menu())
+    await m.answer(format_info(format_header("Жесткая Игра")), reply_markup=menu_initial())
 
 @router.callback_query(F.data == "ui_new_game")
 async def ui_new_game(cb: CallbackQuery):
     await _create_game(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name)
     await cb.answer()
     await cb.message.edit_reply_markup(reply_markup=None)
-    await cb.message.edit_text(format_info("Игра начата!"), reply_markup=menu_for_host())
+    await cb.message.edit_text(format_info("Игра начата!"), reply_markup=menu_joinable())
 
 @router.callback_query(F.data == "ui_join_game")
 async def ui_join_game(cb: CallbackQuery, bot: Bot):
@@ -98,7 +101,7 @@ async def ui_start_round(cb: CallbackQuery):
     await cb.answer()
     if cb.from_user.id != host_id:
         return await cb.message.answer(format_error("Только ведущий может начать раунд"))
-    await cb.message.edit_reply_markup(reply_markup=None)
+    await cb.message.edit_reply_markup(reply_markup=menu_for_host())
     await _start_round(cb.bot, cb.message.chat.id)
 
 async def _create_game(chat_id: int, host_id: int, host_name: str):
@@ -137,7 +140,6 @@ async def _start_round(bot: Bot, chat_id: int):
     st["answers"].clear()
     st["hands"].clear()
     st["host_idx"] = (st["host_idx"] + 1) % len(st["players"])
-    host = st["players"][st["host_idx"]]
     st["current_situation"] = decks.get_random_situation()
     log_event("ROUND_START", f"ChatID={chat_id}, Round={st['host_idx']+1}")
 
@@ -150,7 +152,7 @@ async def _start_round(bot: Bot, chat_id: int):
 
     for p in st["players"]:
         uid = p["user_id"]
-        if uid == host["user_id"]:
+        if uid == st["players"][st["host_idx"]]["user_id"]:
             continue
         hand = []
         while len(hand) < 10 and st["main_deck"]:
@@ -159,7 +161,7 @@ async def _start_round(bot: Bot, chat_id: int):
 
     for p in st["players"]:
         uid = p["user_id"]
-        if uid == host["user_id"]:
+        if uid == st["players"][st["host_idx"]]["user_id"]:
             continue
         hand = st["hands"][uid]
         kb = InlineKeyboardMarkup(inline_keyboard=[
