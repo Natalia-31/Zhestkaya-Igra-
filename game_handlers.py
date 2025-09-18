@@ -5,7 +5,7 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram.filters import CommandStart
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.utils.chat_member import ChatMemberIterator
+from aiogram.utils.iterators import ChatMemberIterator
 from PIL import Image, ImageDraw, ImageFont
 from gen import format_error, format_info, log_event
 from game_utils import decks, video_gen
@@ -183,12 +183,10 @@ async def _start_round(bot: Bot, chat_id: int):
         if uid == host["user_id"]:
             continue
         hand = st["hands"][uid]
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text=str(i+1), callback_data=f"ans:{chat_id}:{uid}:{i}")] 
-                for i in range(len(hand))
-            ]
-        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=str(i+1), callback_data=f"ans:{chat_id}:{uid}:{i}")]
+            for i in range(len(hand))
+        ])
         text = f"{format_header('Ваша рука','main')}\n\n🎲 {st['current_situation']}\n\n🎴 У вас {len(hand)} карт."
         try:
             msg = await bot.send_message(uid, text, reply_markup=kb)
