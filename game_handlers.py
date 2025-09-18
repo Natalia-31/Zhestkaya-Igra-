@@ -9,7 +9,6 @@ from PIL import Image, ImageDraw, ImageFont
 from game_utils import decks, video_gen
 from gen import format_error, format_info, log_event
 
-# Настройка логирования
 logging.basicConfig(
     filename="game_events.log",
     level=logging.INFO,
@@ -70,40 +69,36 @@ def main_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")],
     ])
 
+def menu_for_host() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")],
+    ])
+
 @router.message(CommandStart())
 async def cmd_start(m: Message):
     await m.answer(format_info(format_header("Жесткая Игра")), reply_markup=main_menu())
-
-@router.message(Command("new_game"))
-async def cmd_new_game(m: Message):
-    await _create_game(m.chat.id, m.from_user.id, m.from_user.full_name)
-    await m.answer(format_info("Игра начата!"), reply_markup=main_menu())
-
-@router.message(Command("join_game"))
-async def cmd_join_game(m: Message, bot: Bot):
-    await _join_flow(m.chat.id, m.from_user.id, m.from_user.full_name, bot, feedback=m)
-
-@router.message(Command("start_round"))
-async def cmd_start_round(m: Message):
-    await _start_round(m.bot, m.chat.id)
 
 @router.callback_query(F.data == "ui_new_game")
 async def ui_new_game(cb: CallbackQuery):
     await _create_game(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name)
     await cb.answer()
-    try:
-        await cb.message.edit_text(format_info("Игра начата!"), reply_markup=main_menu())
-    except TelegramBadRequest:
-        pass
+    await cb.message.edit_reply_markup(reply_markup=None)
+    await cb.message.edit_text(format_info("Игра начата!"), reply_markup=menu_for_host())
 
 @router.callback_query(F.data == "ui_join_game")
 async def ui_join_game(cb: CallbackQuery, bot: Bot):
     await _join_flow(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name, bot, feedback=cb.message)
     await cb.answer()
+    await cb.message.edit_reply_markup(reply_markup=None)
 
 @router.callback_query(F.data == "ui_start_round")
 async def ui_start_round(cb: CallbackQuery):
+    st = SESSIONS.get(cb.message.chat.id)
+    host_id = st["players"][st["host_idx"]]["user_id"] if st else None
     await cb.answer()
+    if cb.from_user.id != host_id:
+        return await cb.message.answer(format_error("Только ведущий может начать раунд"))
+    await cb.message.edit_reply_markup(reply_markup=None)
     await _start_round(cb.bot, cb.message.chat.id)
 
 async def _create_game(chat_id: int, host_id: int, host_name: str):
@@ -122,7 +117,7 @@ async def _create_game(chat_id: int, host_id: int, host_name: str):
 async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedback: Message):
     st = SESSIONS.get(chat_id)
     if not st:
-        await feedback.answer(format_error("Сначала начните игру"), reply_markup=main_menu())
+        await feedback.answer(format_error("Сначала начните игру"), reply_markup=None)
         return
     if user_id not in [p["user_id"] for p in st["players"]]:
         try:
@@ -131,12 +126,12 @@ async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedb
             await feedback.answer(format_error(f"{user_name}, нажмите Старт у бота и повторите."))
             return
         st["players"].append({"user_id": user_id, "username": user_name})
-    await feedback.answer(format_info(f"Игроков: {len(st['players'])}"), reply_markup=main_menu())
+    await feedback.answer(format_info(f"Игроков: {len(st['players'])}"), reply_markup=None)
 
 async def _start_round(bot: Bot, chat_id: int):
     st = SESSIONS.get(chat_id)
     if not st or len(st["players"]) < 2:
-        await bot.send_message(chat_id, format_error("Нужно минимум 2 игрока"), reply_markup=main_menu())
+        await bot.send_message(chat_id, format_error("Нужно минимум 2 игрока"), reply_markup=None)
         return
 
     st["answers"].clear()
@@ -146,7 +141,7 @@ async def _start_round(bot: Bot, chat_id: int):
     st["current_situation"] = decks.get_random_situation()
     log_event("ROUND_START", f"ChatID={chat_id}, Round={st['host_idx']+1}")
 
-    title = format_header(f"Раунд {st['host_idx']+1}", style="round")
+    title = format_header(f"Раунд {st['host_idx']+1}", "round")
     card = format_situation_card(st["current_situation"], st["host_idx"]+1)
     await send_gray_card(chat_id, f"{title}\n\n{card}", bot)
 
@@ -171,7 +166,7 @@ async def _start_round(bot: Bot, chat_id: int):
             [InlineKeyboardButton(text=str(i+1), callback_data=f"ans:{chat_id}:{uid}:{i}")]
             for i in range(len(hand))
         ])
-        text = f"{format_header('Ваша рука', 'main')}\n\n🎲 {st['current_situation']}\n\n🎴 У вас {len(hand)} карт."
+        text = f"{format_header('Ваша рука','main')}\n\n🎲 {st['current_situation']}\n\n🎴 У вас {len(hand)} карт."
         try:
             msg = await bot.send_message(uid, text, reply_markup=kb)
             for sec in range(30, 0, -1):
@@ -203,7 +198,7 @@ async def on_answer(cb: CallbackQuery):
     await cb.answer(format_info(f"Вы выбрали: {card}"))
 
     if len(st["answers"]) >= len(st["players"]) - 1:
-        header = format_header("Ответы игроков", "main")
+        header = format_header("Ответы игроков","main")
         lines, buttons = [], []
         for i, (uid2, ans) in enumerate(st["answers"].items(), 1):
             name = next(p["username"] for p in st["players"] if p["user_id"] == uid2)
@@ -232,7 +227,7 @@ async def on_pick(cb: CallbackQuery):
     st["scores"][win_name] += 1
     log_event("WINNER_PICK", f"ChatID={chat_id}, Winner={win_name}")
 
-    result_header = format_header("Результат раунда", "result")
+    result_header = format_header("Результат раунда","result")
     result_text = f"{result_header}\n\n🏆 Победитель: {win_name}\nОтвет: {win_ans}"
     await send_gray_card(chat_id, result_text, cb.bot)
 
@@ -256,4 +251,4 @@ async def on_pick(cb: CallbackQuery):
             except TelegramBadRequest:
                 pass
 
-    await cb.bot.send_message(chat_id, format_info("Раунд завершён"), reply_markup=main_menu())
+    await cb.bot.send_message(chat_id, format_info("Раунд завершён"), reply_markup=menu_for_host())
