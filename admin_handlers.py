@@ -1,5 +1,5 @@
 # В файлах game_handlers.py и admin_handlers.py
-from game_utils import decks, gen
+from game_utils import decks, send_illustration, video_gen
 
 from aiogram import Router, F
 from aiogram.types import Message
