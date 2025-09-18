@@ -5,7 +5,6 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from aiogram.filters import CommandStart
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.utils.iterators import ChatMemberIterator
 from PIL import Image, ImageDraw, ImageFont
 from gen import format_error, format_info, log_event
 from game_utils import decks, video_gen
@@ -56,12 +55,15 @@ def render_scores_ascii(st: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 async def send_gray_card(chat_id: int, text: str, bot: Bot, filename: str = "card.png"):
-    img = Image.new("RGB", (600, 300), (230, 230, 230))
-    draw = ImageDraw.Draw(img)
-    font = ImageFont.truetype("arial.ttf", 20)
-    draw.multiline_text((20, 20), text, fill=(50, 50, 50), font=font, spacing=4)
-    img.save(filename)
-    await bot.send_photo(chat_id, photo=InputFile(filename))
+    try:
+        img = Image.new("RGB", (600, 300), (230, 230, 230))
+        draw = ImageDraw.Draw(img)
+        font = ImageFont.truetype("arial.ttf", 20)
+        draw.multiline_text((20, 20), text, fill=(50, 50, 50), font=font, spacing=4)
+        img.save(filename)
+        await bot.send_photo(chat_id, photo=InputFile(filename))
+    except:
+        await bot.send_message(chat_id, text)
 
 def menu_initial() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -90,23 +92,21 @@ async def ui_new_game(cb: CallbackQuery):
     await _create_game(chat_id, host_id, host_name)
     await cb.answer()
     await cb.message.edit_reply_markup(reply_markup=None)
-    await cb.message.answer(format_info("Игра начата!"))
-    async for member in ChatMemberIterator(cb.bot, chat_id):
-        user = member.user
-        if user.is_bot:
-            continue
-        try:
-            await cb.bot.send_message(
-                user.id,
-                format_info("Нажмите, чтобы присоединиться к игре:"),
-                reply_markup=menu_joinable()
-            )
-        except TelegramBadRequest:
-            pass
+    await cb.message.answer(format_info("Игра начата! Участники могут присоединиться в личке бота."))
 
-@router.callback_query(F.data == "ui_join_game")
+@router.callback_query(F.data == "ui_join_game") 
 async def ui_join_game(cb: CallbackQuery):
-    chat_id = cb.message.chat.id
+    # Получаем chat_id из callback_data или сессий
+    chat_id = None
+    for session_chat_id, session in SESSIONS.items():
+        if session:  # Ищем активную сессию
+            chat_id = session_chat_id
+            break
+    
+    if not chat_id:
+        await cb.answer("Игра не найдена", show_alert=True)
+        return
+        
     user_id = cb.from_user.id
     user_name = cb.from_user.full_name
     await _join_flow(chat_id, user_id, user_name, cb.bot, feedback=cb.message)
@@ -149,7 +149,10 @@ async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedb
             await feedback.answer(format_error("Невозможно отправить ЛС"), reply_markup=None)
             return
         st["players"].append({"user_id": user_id, "username": user_name})
-    await feedback.answer(format_info(f"Игроков: {len(st['players'])}"))
+        
+    # Уведомляем в основном чате
+    await bot.send_message(chat_id, format_info(f"Игроков: {len(st['players'])}"))
+    await feedback.answer(format_info("Вы присоединились к игре!"))
 
 async def _start_round(bot: Bot, chat_id: int):
     st = SESSIONS.get(chat_id)
@@ -243,7 +246,7 @@ async def on_pick(cb: CallbackQuery):
 
     uid_win, win_ans = list(st["answers"].items())[idx]
     win_name = next(p["username"] for p in st["players"] if p["user_id"]==uid_win)
-    st["scores"][win_name] += 1
+    st["scores"][win_name] = st["scores"].get(win_name, 0) + 1
     log_event("WINNER_PICK", f"ChatID={chat_id}, Winner={win_name}")
 
     result_header = format_header("Результат раунда","result")
