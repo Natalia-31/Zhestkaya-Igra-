@@ -90,12 +90,15 @@ async def ui_new_game(cb: CallbackQuery):
     await cb.answer()
     await cb.message.edit_reply_markup(reply_markup=None)
     await cb.message.answer(format_info("Игра начата!"))
-    admins = await cb.bot.get_chat_administrators(chat_id)
-    for member in admins:
-        user_id = member.user.id
+    # рассылаем меню «Присоединиться» всем членам чата
+    members = await cb.bot.get_chat_members(chat_id)
+    for member in members:
+        user = member.user
+        if user.is_bot:
+            continue
         try:
             await cb.bot.send_message(
-                user_id,
+                user.id,
                 format_info("Нажмите, чтобы присоединиться к игре:"),
                 reply_markup=menu_joinable()
             )
@@ -145,7 +148,7 @@ async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedb
         try:
             await bot.send_message(
                 user_id,
-                format_info("Вы присоединились! Ждём, пока ведущий запустит раунд."),
+                format_info("Вы присоединились! Ждём запуска раунда."),
                 reply_markup=None
             )
         except TelegramBadRequest:
@@ -157,8 +160,7 @@ async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedb
 async def _start_round(bot: Bot, chat_id: int):
     st = SESSIONS.get(chat_id)
     if not st or len(st["players"]) < 2:
-        return await bot.send_message(chat_id, format_error("Нужно минимум 2 игрока"), reply_markup=None)
-
+        return await bot.send_message(chat_id, format_error("Нужно минимум 2 игрока"))
     st["answers"].clear()
     st["hands"].clear()
     st["host_idx"] = (st["host_idx"] + 1) % len(st["players"])
@@ -206,7 +208,7 @@ async def _start_round(bot: Bot, chat_id: int):
 @router.callback_query(F.data.startswith("ans:"))
 async def on_answer(cb: CallbackQuery):
     _, chat_id_str, uid_str, idx_str = cb.data.split(":")
-    chat_id, uid, idx = int(chat_id_str), int(uid_str), int(idx_str)
+    chat_id, uid, idx = map(int, (chat_id_str, uid_str, idx_str))
     st = SESSIONS.get(chat_id)
     if not st:
         return await cb.answer(format_error("Игра не найдена"), show_alert=True)
@@ -225,19 +227,20 @@ async def on_answer(cb: CallbackQuery):
     if len(st["answers"]) >= len(st["players"]) - 1:
         header = format_header("Ответы игроков","main")
         lines, buttons = [], []
-        for i,(uid2,ans) in enumerate(st["answers"].items(),1):
-            name = next(p["username"] for p in st["players"] if p["user_id"]==uid2)
-            if uid2==host_id: name=f"<b>{name}</b>"
+        for i, (uid2, ans) in enumerate(st["answers"].items(), 1):
+            name = next(p["username"] for p in st["players"] if p["user_id"] == uid2)
+            if uid2 == host_id:
+                name = f"<b>{name}</b>"
             lines.append(f"{i}. {name} — {ans}")
             buttons.append([InlineKeyboardButton(text=str(i), callback_data=f"pick:{chat_id}:{i-1}")])
         kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-        await send_gray_card(chat_id, f"{header}\n\n"+"\n".join(lines), cb.bot)
+        await send_gray_card(chat_id, f"{header}\n\n" + "\n".join(lines), cb.bot)
         await cb.bot.send_message(chat_id, format_info("Выберите победителя:"), reply_markup=kb)
 
 @router.callback_query(F.data.startswith("pick:"))
 async def on_pick(cb: CallbackQuery):
     _, chat_id_str, idx_str = cb.data.split(":")
-    chat_id, idx = int(chat_id_str), int(idx_str)
+    chat_id, idx = map(int, (chat_id_str, idx_str))
     st = SESSIONS.get(chat_id)
     if not st:
         return await cb.answer(format_error("Игра не найдена"), show_alert=True)
@@ -246,8 +249,8 @@ async def on_pick(cb: CallbackQuery):
         return await cb.answer(format_error("Только ведущий может выбирать"), show_alert=True)
 
     uid_win, win_ans = list(st["answers"].items())[idx]
-    win_name = next(p["username"] for p in st["players"] if p["user_id"]==uid_win)
-    st["scores"][win_name]+=1
+    win_name = next(p["username"] for p in st["players"] if p["user_id"] == uid_win)
+    st["scores"][win_name] += 1
     log_event("WINNER_PICK", f"ChatID={chat_id}, Winner={win_name}")
 
     result_header = format_header("Результат раунда","result")
@@ -255,5 +258,4 @@ async def on_pick(cb: CallbackQuery):
     await send_gray_card(chat_id, result_text, cb.bot)
     await cb.bot.send_message(chat_id, render_scores_ascii(st))
 
-    # готовим след. раунд
     await cb.bot.send_message(host_id, format_info("Готово к новому раунду"), reply_markup=menu_for_host())
