@@ -1,120 +1,135 @@
-# game_utils/gen.py — иллюстрация (заглушка) + генерация видео через Runway
 import os
+import json
+import random
 import asyncio
+from io import BytesIO
+from pathlib import Path
 import aiohttp
+from urllib.parse import quote
+from dotenv import load_dotenv
 from aiogram import Bot
+from aiogram.types import BufferedInputFile
 
-RUNWAY_API_KEY = os.getenv("RUNWAY_API_KEY")
-RUNWAY_BASE = "https://api.runwayml.com/v1"
+load_dotenv()
+# API Keys from .env
+NANO_API_KEY       = os.getenv("NANO_API_KEY")
+HORDE_API_KEY      = os.getenv("HORDE_API_KEY")
+POLLO_API_KEY      = os.getenv("POLLO_API_KEY")
+REPLICATE_API_TOKEN= os.getenv("REPLICATE_API_TOKEN")
 
-async def send_illustration(bot: Bot, chat_id: int, situation: str, answer: str) -> str | None:
-    """
-    ВАША текущая генерация изображения.
-    Здесь заглушка: отправляет текст и возвращает None.
-    Если у вас уже есть реальная генерация (например, через SD/Replicate),
-    верните публичный URL картинки — он пойдёт как reference_image_url в видео.
-    """
-    await bot.send_message(chat_id, f"🖼️ Иллюстрация: {situation}\n— {answer}")
-    return None  # верните URL, если он у вас есть
+# ─── DeckManager ──────────────────────────────────────────────────────────────
+class DeckManager:
+    def __init__(self, sit_file="situations.json", ans_file="answers.json"):
+        base = Path(__file__).parent
+        self.situations = self._load(base / sit_file)
+        self.answers    = self._load(base / ans_file)
+    def _load(self, path: Path):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except:
+            return []
+    def get_random_situation(self):
+        return random.choice(self.situations) if self.situations else ""
+    def get_new_shuffled_answers_deck(self):
+        deck = self.answers.copy(); random.shuffle(deck); return deck
 
-async def _runway_create_task(session: aiohttp.ClientSession, payload: dict) -> dict:
-    headers = {
-        "Authorization": f"Bearer {RUNWAY_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    async with session.post(f"{RUNWAY_BASE}/tasks", json=payload, headers=headers) as resp:
-        if resp.status >= 400:
-            text = await resp.text()
-            raise RuntimeError(f"Runway create failed {resp.status}: {text}")
-        return await resp.json()
+decks = DeckManager()
 
-async def _runway_get_task(session: aiohttp.ClientSession, task_id: str) -> dict:
-    headers = {"Authorization": f"Bearer {RUNWAY_API_KEY}"}
-    async with session.get(f"{RUNWAY_BASE}/tasks/{task_id}", headers=headers) as resp:
-        if resp.status >= 400:
-            text = await resp.text()
-            raise RuntimeError(f"Runway get failed {resp.status}: {text}")
-        return await resp.json()
 
-async def send_runway_video(
-    bot: Bot,
-    chat_id: int,
-    situation: str,
-    answer: str,
-    reference_image_url: str | None = None,
-    duration: int = 5,
-    model: str = "gen_4_turbo",
-):
-    """
-    Создаёт видео по ситуации и победившему ответу через Runway API и отправляет в чат.
-    Использует image-to-video при наличии reference_image_url, иначе text-to-video.
-    """
-    if not RUNWAY_API_KEY:
-        await bot.send_message(chat_id, "⚠️ RUNWAY_API_KEY не задан в окружении.")
-        return
+# ─── Prompt builders ──────────────────────────────────────────────────────────
+def create_prompt(situation: str, answer: str) -> str:
+    base = f"{situation.strip()} — {answer.strip()}"
+    return f"{base}, cartoon style, flat colors, simple shapes"
 
-    # Формируем промпт
-    prompt = f"{situation}. Then: {answer}. Cinematic camera, smooth motion, realistic lighting."
+def create_video_prompt(situation: str, answer: str) -> str:
+    base = f"{situation.strip()} — {answer.strip()}"
+    return f"6s cartoon video: {base}, smooth animation, simple characters"
 
-    payload = {
-        "model": model,
-        "input": {
-            "prompt": prompt,
-            "duration": duration,
-        }
-    }
-    if reference_image_url:
-        payload["input"]["image"] = reference_image_url  # image-to-video режим
 
-    # Сообщение о старте
-    await bot.send_message(chat_id, "🎥 Генерация видео в Runway… подождите 30–90 секунд.")
+# ─── Nanobanana ───────────────────────────────────────────────────────────────
+async def _try_nanobanana(prompt: str) -> BytesIO | None:
+    if not NANO_API_KEY: return None
+    url = "https://api.nanobanana.ai/v1/generate"
+    headers = {"Authorization": f"Bearer {NANO_API_KEY}", "Content-Type": "application/json"}
+    payload = {"prompt":prompt,"model":"sdxl","width":512,"height":512,"steps":20,"cfg_scale":7.0}
+    async with aiohttp.ClientSession() as s:
+        async with s.post(url,json=payload,headers=headers,timeout=60) as r:
+            if r.status!=200: return None
+            data = await r.json()
+            img_url = data.get("image_url") or data.get("url")
+        if not img_url: return None
+        async with s.get(img_url,timeout=30) as r2:
+            if r2.status!=200: return None
+            return BytesIO(await r2.read())
 
-    try:
-        timeout = aiohttp.ClientTimeout(total=900)  # до 15 минут на всякий случай
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            # 1) создаём задачу
-            task = await _runway_create_task(session, payload)
-            task_id = task.get("id")
+# ─── AI Horde ────────────────────────────────────────────────────────────────
+async def _try_horde(prompt: str) -> BytesIO | None:
+    if not HORDE_API_KEY: return None
+    start = "https://aihorde.net/api/v2/generate/async"
+    check = "https://aihorde.net/api/v2/generate/check/"
+    hdr = {"apikey":HORDE_API_KEY}
+    payload = {"prompt":prompt,"params":{"width":512,"height":512,"sampler_name":"k_euler_ancestral"}}
+    async with aiohttp.ClientSession() as s:
+        async with s.post(start,json=payload,headers=hdr,timeout=30) as r:
+            jd = await r.json(); task=jd.get("id")
+        for _ in range(30):
+            await asyncio.sleep(2)
+            async with s.get(check+task,headers=hdr,timeout=10) as st:
+                sd = await st.json()
+                if sd.get("done"):
+                    url = sd["images"][0]
+                    async with s.get(url,timeout=20) as img:
+                        return BytesIO(await img.read())
+    return None
 
-            if not task_id:
-                await bot.send_message(chat_id, "❌ Не удалось создать задачу в Runway (пустой task_id).")
-                return
+# ─── Pollo.ai Video ─────────────────────────────────────────────────────────
+class GameVideoGenerator:
+    def __init__(self):
+        self.key = POLLO_API_KEY
+        self.url = "https://pollo.ai/api/platform/generation/minimax/video-01"
+    async def _try_pollo(self, prompt: str) -> str | None:
+        if not self.key: return None
+        hdr = {"x-api-key":self.key,"Content-Type":"application/json"}
+        async with aiohttp.ClientSession() as s:
+            async with s.post(self.url,json={"input":{"prompt":prompt}},headers=hdr,timeout=60) as r:
+                j = await r.json(); tid = j.get("taskId") or j.get("id")
+            status = f"https://pollo.ai/api/platform/generation/{tid}/status"
+            for _ in range(30):
+                await asyncio.sleep(10)
+                async with s.get(status,headers=hdr,timeout=30) as st:
+                    sd=await st.json()
+                    if sd.get("status") in ("completed","succeeded"):
+                        out=sd.get("output") or sd.get("outputs") or {}
+                        url = (out.get("url") if isinstance(out,dict) else out[0].get("url"))
+                        return url
+        return None
 
-            # 2) опрос статуса
-            attempts = 0
-            while True:
-                await asyncio.sleep(2)
-                attempts += 1
-                data = await _runway_get_task(session, task_id)
-                status = data.get("status")
-                if status in ("SUCCEEDED", "FAILED", "CANCELED", "THROTTLED"):
-                    if status == "SUCCEEDED":
-                        output = data.get("output", {}) or {}
-                        # По докам результат — URL(ы), иногда ключ называется video/url
-                        video_url = (
-                            output.get("video")
-                            or output.get("output_video")
-                            or output.get("url")
-                        )
-                        if not video_url:
-                            await bot.send_message(chat_id, "⚠️ Видео готово, но ссылка не найдена.")
-                            return
-                        # 3) отправляем как видео
-                        await bot.send_video(chat_id, video=video_url, caption="🎬 Runway видео по победившему ответу")
-                        return
-                    elif status == "THROTTLED":
-                        # перегрузка по concurrency — просто подождать дольше
-                        await bot.send_message(chat_id, "⏳ Очередь Runway занята (THROTTLED). Ждём…")
-                        # и продолжаем polling
-                    else:
-                        err = data.get("error") or "Неизвестная ошибка"
-                        await bot.send_message(chat_id, f"❌ Runway ошибка: {err}")
-                        return
+    async def send_video(self,bot:Bot,chat_id:int,sit:str,ans:str)->bool:
+        prompt = create_video_prompt(sit,ans)
+        url = await self._try_pollo(prompt)
+        if not url: return False
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url,timeout=60) as r:
+                if r.status==200:
+                    data=await r.read()
+                    await bot.send_video(chat_id,video=BufferedInputFile(data,"vid.mp4"),duration=6)
+                    return True
+        return False
 
-                # таймаут ожидания
-                if attempts > 600:  # ~20 минут
-                    await bot.send_message(chat_id, "⏱️ Таймаут ожидания ответа от Runway.")
-                    return
+video_gen = GameVideoGenerator()
 
-    except Exception as e:
-        await bot.send_message(chat_id, f"❌ Ошибка при обращении к Runway: {e}")
+
+# ─── Image sender ────────────────────────────────────────────────────────────
+async def send_illustration(bot:Bot,chat_id:int,sit:str,ans:str)->bool:
+    prompt = create_prompt(sit,ans)
+    tasks = [
+        _try_horde(prompt),
+        _try_nanobanana(prompt),
+    ]
+    for coro in asyncio.as_completed(tasks):
+        buf = await coro
+        if buf:
+            buf.seek(0)
+            await bot.send_photo(chat_id, photo=BufferedInputFile(buf.read(),filename="scene.png"))
+            return True
+    return False
