@@ -1,4 +1,4 @@
-# game_utils.py — чтение JSON из корня проекта + исправленный перевод в видео-промпте
+# game_utils.py — читает JSON из той же папки, где лежит файл; готов для handlers/game_handlers.py
 import os
 import json
 import random
@@ -7,21 +7,19 @@ from typing import List, Optional
 from io import BytesIO
 import asyncio
 import aiohttp
-import base64
 from urllib.parse import quote
 
 from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 
-# Ключи
+# ====== Ключи ======
 load_dotenv()
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 NANO_API_KEY   = os.getenv("NANO_API_KEY")
 HORDE_API_KEY  = os.getenv("HORDE_API_KEY")
 POLLO_API_KEY  = os.getenv("POLLO_API_KEY")
 
-# ---------- Промпты ----------
+# ====== Помощники ======
 def _translate_to_en(text: str) -> str:
     if any(ord(c) > 127 for c in text):
         try:
@@ -50,16 +48,16 @@ def create_video_prompt(situation: str, answer: str) -> str:
         f"Dynamic scene showing {answer_en} in action, representing: {situation_en}",
         f"Animated sequence of {answer_en} responding to: {situation_en}",
         f"Character discovering {answer_en} in context of: {situation_en}",
-        f"Humorous scene with {answer_en} solving problem: {situation_en}"
+        f"Humorous scene with {answer_en} solving problem: {situation_en}",
     ]
     motion_styles = ["smooth animation", "bouncy movement", "dramatic zoom", "gentle pan", "dynamic rotation"]
     return f"6-second cartoon video: {random.choice(motion_scenarios)}, {random.choice(motion_styles)}, colorful, expressive characters, simple animation style"
 
-# ---------- Колоды ----------
+# ====== Колоды ======
 class DeckManager:
     def __init__(self, situations_file: str = "situations.json", answers_file: str = "answers.json", base: Path | None = None):
-        # База — корень проекта (на уровень выше utils)
-        self.base_dir = base or Path(__file__).resolve().parent.parent
+        # База — та же папка, где лежит этот файл
+        self.base_dir = base or Path(__file__).resolve().parent
         self.sit_path = (self.base_dir / situations_file).resolve()
         self.ans_path = (self.base_dir / answers_file).resolve()
         self.situations: List[str] = self._load_list(self.sit_path, "situations")
@@ -70,7 +68,7 @@ class DeckManager:
             try:
                 data = json.loads(file_path.read_text(encoding=enc))
                 if isinstance(data, list):
-                    # фильтр строк + удаление дублей
+                    # строки + удаление дублей
                     seen, out = set(), []
                     for x in data:
                         if isinstance(x, str):
@@ -93,7 +91,7 @@ class DeckManager:
 
 decks = DeckManager()
 
-# ---------- Изображения ----------
+# ====== Изображения ======
 class GameImageGenerator:
     def __init__(self):
         self.nb_key = NANO_API_KEY
@@ -144,7 +142,7 @@ class GameImageGenerator:
         await bot.send_photo(chat_id, photo=BufferedInputFile(img.read(), filename="scene.jpg"))
         return True
 
-# ---------- Видео (Pollo.ai) ----------
+# ====== Видео (Pollo.ai) ======
 class GameVideoGenerator:
     def __init__(self):
         self.pollo_key = POLLO_API_KEY
@@ -164,7 +162,7 @@ class GameVideoGenerator:
                     if not task_id:
                         return None
                 status_url = f"https://pollo.ai/api/platform/generation/{task_id}/status"
-                for _ in range(36):
+                for _ in range(36):  # до ~6 минут
                     await asyncio.sleep(10)
                     async with s.get(status_url, headers=headers, timeout=30) as st:
                         if st.status != 200:
@@ -177,8 +175,10 @@ class GameVideoGenerator:
                                 return out.get("url") or out.get("video_url")
                             lst = js.get("outputs") or js.get("result") or []
                             for it in lst or []:
-                                if isinstance(it, dict) and (it.get("url") or it.get("video_url")):
-                                    return it.get("url") or it.get("video_url")
+                                if isinstance(it, dict):
+                                    u = it.get("url") or it.get("video_url")
+                                    if u:
+                                        return u
                             return js.get("url") or js.get("videoUrl")
                         if status in ("failed", "error"):
                             return None
@@ -202,5 +202,6 @@ class GameVideoGenerator:
         except Exception:
             return False
 
+# Экземпляры для импорта
 gen = GameImageGenerator()
 video_gen = GameVideoGenerator()
