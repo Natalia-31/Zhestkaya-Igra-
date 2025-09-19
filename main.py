@@ -1,26 +1,29 @@
 import asyncio
-from aiogram import Router
-router = Router()
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import logging
+import os
 
-TOKEN = "8012894305:AAEV10lG4T_4qHgj0WbJJnBdWPOgPXnHBXs"
+from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.default import DefaultBotProperties
 
-def main_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ Начать игру", callback_data="ui_new_game")],
-        [InlineKeyboardButton(text="➕ Присоединиться", callback_data="ui_join_game")],
-        [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")],
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="ui_scores")]
-    ])
+from handlers.game_handlers import router as game_router
+
+logging.basicConfig(level=logging.INFO)
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 async def main():
-    bot = Bot(token=TOKEN)
-    dp = Dispatcher()
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
 
-    @dp.message()
-    async def any_msg(message: types.Message):
-        await message.answer("Тестовое меню:", reply_markup=main_menu())
+    bot = Bot(
+        token=BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=None)
+    )
+    dp = Dispatcher(storage=MemoryStorage())
+
+    # Роутеры
+    dp.include_router(game_router)
 
     await dp.start_polling(bot)
 
