@@ -1,41 +1,28 @@
-# main.py - ИСПРАВЛЕННАЯ ВЕРСИЯ
-
 import asyncio
-import logging
-from os import getenv
+from aiogram import Router
+router = Router()
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from aiogram import Bot, Dispatcher
-# Добавляем новый импорт для правильной инициализации
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
-from dotenv import load_dotenv
+TOKEN = "8012894305:AAEV10lG4T_4qHgj0WbJJnBdWPOgPXnHBXs"
 
-# Импортируем наши обработчики
-from handlers import game_handlers, admin_handlers
+def main_menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Начать игру", callback_data="ui_new_game")],
+        [InlineKeyboardButton(text="➕ Присоединиться", callback_data="ui_join_game")],
+        [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="ui_scores")]
+    ])
 
 async def main():
-    # Загружаем переменные окружения из .env файла
-    load_dotenv()
-    
-    # Правильная инициализация бота для новых версий aiogram
-    bot = Bot(
-        token=getenv("BOT_TOKEN"),
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-    )
-    
-    # Инициализация диспетчера
+    bot = Bot(token=TOKEN)
     dp = Dispatcher()
 
-    # Подключаем роутеры с командами
-    dp.include_router(admin_handlers.router)
-    dp.include_router(game_handlers.router)
-    
-    # Удаляем вебхук и запускаем long polling
-    await bot.delete_webhook(drop_pending_updates=True)
+    @dp.message()
+    async def any_msg(message: types.Message):
+        await message.answer("Тестовое меню:", reply_markup=main_menu())
+
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    # Настраиваем логирование для отладки
-    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
-
