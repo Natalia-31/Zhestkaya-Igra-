@@ -1,6 +1,6 @@
+import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-import asyncio
 
 TOKEN = "8012894305:AAEV10lG4T_4qHgj0WbJJnBdWPOgPXnHBXs"
 
@@ -17,7 +17,7 @@ async def main():
     dp = Dispatcher()
 
     @dp.message()
-    async def any_message(message: types.Message):
+    async def any_msg(message: types.Message):
         await message.answer("Тестовое меню:", reply_markup=main_menu())
 
     await dp.start_polling(bot)
