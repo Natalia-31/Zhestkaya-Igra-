@@ -12,6 +12,9 @@ from urllib.parse import quote
 from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
+from pathlib import Path
+decks = DeckManager(base=Path(__file__).resolve().parent)
+
 
 # ====== Ключи ======
 load_dotenv()
