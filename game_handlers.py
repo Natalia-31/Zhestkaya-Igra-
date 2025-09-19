@@ -1,10 +1,10 @@
-from typing import Dict, Any, List
+from typing import Dict, Any
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command, CommandStart
 from aiogram.exceptions import TelegramBadRequest
 
-from game_utils import decks, send_illustration, video_gen
+from game_utils import decks, video_gen
 
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
@@ -33,7 +33,7 @@ async def cmd_join_game(m: Message, bot: Bot):
 async def cmd_start_round(m: Message):
     await _start_round(m.bot, m.chat.id)
 
-@router.callback_query(F.data == "ui_new_game"))
+@router.callback_query(F.data == "ui_new_game")
 async def ui_new_game(cb: CallbackQuery):
     await _create_game(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name)
     await cb.answer()
@@ -42,12 +42,12 @@ async def ui_new_game(cb: CallbackQuery):
     except TelegramBadRequest:
         pass
 
-@router.callback_query(F.data == "ui_join_game"))
+@router.callback_query(F.data == "ui_join_game")
 async def ui_join_game(cb: CallbackQuery, bot: Bot):
     await _join_flow(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name, bot, feedback=cb.message)
     await cb.answer()
 
-@router.callback_query(F.data == "ui_start_round"))
+@router.callback_query(F.data == "ui_start_round")
 async def ui_start_round(cb: CallbackQuery):
     await cb.answer()
     await _start_round(cb.bot, cb.message.chat.id)
