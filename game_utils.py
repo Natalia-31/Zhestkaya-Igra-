@@ -1,4 +1,4 @@
-# game_utils.py — читает JSON из той же папки, где лежит файл; готов для handlers/game_handlers.py
+# game_utils.py — читает JSON из той же папки; совместим с handlers/game_handlers.py
 import os
 import json
 import random
@@ -12,17 +12,14 @@ from urllib.parse import quote
 from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
-from pathlib import Path
-decks = DeckManager(base=Path(__file__).resolve().parent)
 
-
-# ====== Ключи ======
+# ====== Загрузка ключей ======
 load_dotenv()
 NANO_API_KEY   = os.getenv("NANO_API_KEY")
 HORDE_API_KEY  = os.getenv("HORDE_API_KEY")
 POLLO_API_KEY  = os.getenv("POLLO_API_KEY")
 
-# ====== Помощники ======
+# ====== Вспомогательные функции ======
 def _translate_to_en(text: str) -> str:
     if any(ord(c) > 127 for c in text):
         try:
@@ -56,7 +53,7 @@ def create_video_prompt(situation: str, answer: str) -> str:
     motion_styles = ["smooth animation", "bouncy movement", "dramatic zoom", "gentle pan", "dynamic rotation"]
     return f"6-second cartoon video: {random.choice(motion_scenarios)}, {random.choice(motion_styles)}, colorful, expressive characters, simple animation style"
 
-# ====== Колоды ======
+# ====== Менеджер колод ======
 class DeckManager:
     def __init__(self, situations_file: str = "situations.json", answers_file: str = "answers.json", base: Path | None = None):
         # База — та же папка, где лежит этот файл
@@ -71,7 +68,7 @@ class DeckManager:
             try:
                 data = json.loads(file_path.read_text(encoding=enc))
                 if isinstance(data, list):
-                    # строки + удаление дублей
+                    # фильтр строк + удаление дублей и пустых
                     seen, out = set(), []
                     for x in data:
                         if isinstance(x, str):
@@ -92,9 +89,7 @@ class DeckManager:
         random.shuffle(deck)
         return deck
 
-decks = DeckManager()
-
-# ====== Изображения ======
+# ====== Генерация изображений ======
 class GameImageGenerator:
     def __init__(self):
         self.nb_key = NANO_API_KEY
@@ -145,7 +140,7 @@ class GameImageGenerator:
         await bot.send_photo(chat_id, photo=BufferedInputFile(img.read(), filename="scene.jpg"))
         return True
 
-# ====== Видео (Pollo.ai) ======
+# ====== Генерация видео (Pollo.ai) ======
 class GameVideoGenerator:
     def __init__(self):
         self.pollo_key = POLLO_API_KEY
@@ -165,7 +160,7 @@ class GameVideoGenerator:
                     if not task_id:
                         return None
                 status_url = f"https://pollo.ai/api/platform/generation/{task_id}/status"
-                for _ in range(36):  # до ~6 минут
+                for _ in range(36):  # ожидание до ~6 минут
                     await asyncio.sleep(10)
                     async with s.get(status_url, headers=headers, timeout=30) as st:
                         if st.status != 200:
@@ -205,6 +200,7 @@ class GameVideoGenerator:
         except Exception:
             return False
 
-# Экземпляры для импорта
+# ====== Экземпляры (после объявлений классов) ======
+decks = DeckManager(base=Path(__file__).resolve().parent)
 gen = GameImageGenerator()
 video_gen = GameVideoGenerator()
