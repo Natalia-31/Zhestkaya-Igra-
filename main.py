@@ -1,3 +1,11 @@
+import os, inspect, pathlib, game_utils
+print("CWD:", os.getcwd())
+print("game_utils file:", inspect.getfile(game_utils))
+print("situations path:", pathlib.Path(game_utils.decks.sit_path))
+print("answers path:", pathlib.Path(game_utils.decks.ans_path))
+print("situations loaded:", len(game_utils.decks.situations))
+print("answers loaded:", len(game_utils.decks.answers))
+
 import asyncio
 import logging
 import os
