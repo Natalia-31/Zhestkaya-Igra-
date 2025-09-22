@@ -1,206 +1,137 @@
-# game_utils.py — читает JSON из той же папки; совместим с handlers/game_handlers.py
 import os
-import json
-import random
-from pathlib import Path
-from typing import List, Optional
 from io import BytesIO
-import asyncio
-import aiohttp
-from urllib.parse import quote
+from typing import Optional
 
+import aiohttp
 from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
+import openai
 
-# ====== Загрузка ключей ======
+# Загрузка переменных окружения
 load_dotenv()
-NANO_API_KEY   = os.getenv("NANO_API_KEY")
-HORDE_API_KEY  = os.getenv("HORDE_API_KEY")
-POLLO_API_KEY  = os.getenv("POLLO_API_KEY")
 
-# ====== Вспомогательные функции ======
-def _translate_to_en(text: str) -> str:
-    if any(ord(c) > 127 for c in text):
-        try:
-            from googletrans import Translator
-            translator = Translator()
-            return translator.translate(text, dest="en").text
-        except Exception:
-            return text
-    return text
+NANO_API_KEY = os.getenv("NANO_API_KEY")
+HORDE_API_KEY = os.getenv("HORDE_API_KEY")
+POLLO_API_KEY = os.getenv("POLLO_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+if not OPENAI_API_KEY:
+    raise RuntimeError("OPENAI_API_KEY не задан в .env")
+
+openai.api_key = OPENAI_API_KEY
+
+
+# ---------- Вспомогательные функции ----------
 def create_prompt(situation: str, answer: str) -> str:
-    situation_clean = situation.replace("_____", "").replace("____", "").strip()
-    situation_en = _translate_to_en(situation_clean)
-    answer_en = _translate_to_en(answer.strip())
-    styles = ["cartoon", "caricature", "comic panel", "flat colors"]
-    perspectives = ["wide shot", "close-up", "medium shot", "bird's eye view", "low angle"]
-    emotions = ["amused expression", "surprised look", "confused face", "happy smile", "shocked expression", "thoughtful pose"]
-    return f"{situation_en} - {answer_en}, {random.choice(styles)}, {random.choice(perspectives)}, {random.choice(emotions)}, colorful, simple shapes, expressive"
+    """Формируем текстовый промпт для генерации изображения."""
+    return f"Иллюстрация для ситуации: {situation}. Ответ игрока: {answer}. Сгенерируй яркое изображение."
+
 
 def create_video_prompt(situation: str, answer: str) -> str:
-    situation_clean = situation.replace("_____", "").replace("____", "").strip()
-    situation_en = _translate_to_en(situation_clean)
-    answer_en = _translate_to_en(answer.strip())
-    motion_scenarios = [
-        f"Person interacting with {answer_en} while thinking about: {situation_en}",
-        f"Dynamic scene showing {answer_en} in action, representing: {situation_en}",
-        f"Animated sequence of {answer_en} responding to: {situation_en}",
-        f"Character discovering {answer_en} in context of: {situation_en}",
-        f"Humorous scene with {answer_en} solving problem: {situation_en}",
-    ]
-    motion_styles = ["smooth animation", "bouncy movement", "dramatic zoom", "gentle pan", "dynamic rotation"]
-    return f"6-second cartoon video: {random.choice(motion_scenarios)}, {random.choice(motion_styles)}, colorful, expressive characters, simple animation style"
+    """Формируем промпт для генерации видео."""
+    return f"Короткий видеоролик, иллюстрирующий ситуацию: {situation}. Ответ игрока: {answer}."
 
-# ====== Менеджер колод ======
-class DeckManager:
-    def __init__(self, situations_file: str = "situations.json", answers_file: str = "answers.json", base: Path | None = None):
-        # База — та же папка, где лежит этот файл
-        self.base_dir = base or Path(__file__).resolve().parent
-        self.sit_path = (self.base_dir / situations_file).resolve()
-        self.ans_path = (self.base_dir / answers_file).resolve()
-        self.situations: List[str] = self._load_list(self.sit_path, "situations")
-        self.answers: List[str]    = self._load_list(self.ans_path, "answers")
 
-    def _load_list(self, file_path: Path, label: str) -> List[str]:
-        for enc in ("utf-8-sig", "utf-8"):
-            try:
-                data = json.loads(file_path.read_text(encoding=enc))
-                if isinstance(data, list):
-                    # фильтр строк + удаление дублей и пустых
-                    seen, out = set(), []
-                    for x in data:
-                        if isinstance(x, str):
-                            x = x.strip()
-                            if x and x not in seen:
-                                seen.add(x); out.append(x)
-                    return out
-                return []
-            except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
-                continue
-        return []
-
-    def get_random_situation(self) -> str:
-        return random.choice(self.situations) if self.situations else "Тестовая ситуация"
-
-    def get_new_shuffled_answers_deck(self) -> List[str]:
-        deck = list(self.answers)
-        random.shuffle(deck)
-        return deck
-
-# ====== Генерация изображений ======
+# ---------- Генератор изображений ----------
 class GameImageGenerator:
-    def __init__(self):
-        self.nb_key = NANO_API_KEY
-
     async def _try_pollinations(self, prompt: str) -> Optional[BytesIO]:
-        url = f"https://image.pollinations.ai/prompt/{quote(prompt)}?width=768&height=432"
+        """Попытка сгенерировать картинку через Pollinations API."""
+        url = f"https://image.pollinations.ai/prompt/{prompt}"
         try:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(url, timeout=20) as r:
-                    if r.status == 200:
-                        return BytesIO(await r.read())
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        return BytesIO(await resp.read())
         except Exception:
-            pass
+            return None
         return None
 
     async def _try_nanobanana(self, prompt: str) -> Optional[BytesIO]:
-        if not self.nb_key:
+        """Попытка сгенерировать картинку через NanoBanana API (пример)."""
+        if not NANO_API_KEY:
             return None
-        url = "https://api.nanobanana.ai/v1/generate"
-        payload = {"prompt": prompt, "model": "sdxl", "width": 768, "height": 432}
-        headers = {"Authorization": f"Bearer {self.nb_key}"}
+        url = "https://api.nanobanana.com/generate"
         try:
-            async with aiohttp.ClientSession() as s:
-                async with s.post(url, json=payload, headers=headers, timeout=60) as r:
-                    if r.status != 200:
-                        return None
-                    data = await r.json()
-                    img_url = data.get("image_url")
-                if not img_url:
-                    return None
-                async with s.get(img_url, timeout=60) as g:
-                    if g.status != 200:
-                        return None
-                    return BytesIO(await g.read())
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    headers={"Authorization": f"Bearer {NANO_API_KEY}"},
+                    json={"prompt": prompt, "size": "512x512"}
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        img_url = data.get("url")
+                        if img_url:
+                            async with session.get(img_url) as img_resp:
+                                return BytesIO(await img_resp.read())
         except Exception:
             return None
+        return None
 
     async def send_illustration(self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None) -> bool:
+        """Отправка иллюстрации для ситуации и ответа."""
         if not answer:
             await bot.send_message(chat_id, "⚠️ Нет ответа для генерации изображения.")
             return False
+
         prompt = create_prompt(situation, answer)
-        img = await self._try_pollinations(prompt) or await self._try_nanobanana(prompt)
+
+        # Попытка через OpenAI
+        img = None
+        try:
+            img_resp = await openai.Image.acreate(
+                prompt=prompt,
+                n=1,
+                size="512x512"
+            )
+            async with aiohttp.ClientSession() as session:
+                async with session.get(img_resp.data[0].url) as resp:
+                    img_bytes = await resp.read()
+                    img = BytesIO(img_bytes)
+        except Exception:
+            # Фолбэк на другие сервисы
+            img = await self._try_pollinations(prompt) or await self._try_nanobanana(prompt)
+
         if not img:
             await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение.")
             return False
-        img.seek(0)
-        await bot.send_photo(chat_id, photo=BufferedInputFile(img.read(), filename="scene.jpg"))
+
+        await bot.send_photo(chat_id, BufferedInputFile(img.getvalue(), filename="illustration.png"))
         return True
 
-# ====== Генерация видео (Pollo.ai) ======
-class GameVideoGenerator:
-    def __init__(self):
-        self.pollo_key = POLLO_API_KEY
-        self.pollo_url = "https://pollo.ai/api/platform/generation/minimax/video-01"
 
+# ---------- Генератор видео ----------
+class GameVideoGenerator:
     async def _try_pollo_video(self, prompt: str) -> Optional[str]:
-        if not self.pollo_key:
+        """Попытка сгенерировать видео через PollO.ai."""
+        if not POLLO_API_KEY:
             return None
-        headers = {"Content-Type": "application/json", "x-api-key": self.pollo_key}
+        url = "https://api.pollo.ai/generate"
         try:
-            async with aiohttp.ClientSession() as s:
-                async with s.post(self.pollo_url, json={"input": {"prompt": prompt}}, headers=headers, timeout=60) as r:
-                    if r.status != 200:
-                        return None
-                    data = await r.json()
-                    task_id = data.get("taskId") or data.get("id")
-                    if not task_id:
-                        return None
-                status_url = f"https://pollo.ai/api/platform/generation/{task_id}/status"
-                for _ in range(36):  # ожидание до ~6 минут
-                    await asyncio.sleep(10)
-                    async with s.get(status_url, headers=headers, timeout=30) as st:
-                        if st.status != 200:
-                            continue
-                        js = await st.json()
-                        status = js.get("status") or js.get("state")
-                        if status in ("completed", "succeeded", "success"):
-                            out = js.get("output") or {}
-                            if isinstance(out, dict):
-                                return out.get("url") or out.get("video_url")
-                            lst = js.get("outputs") or js.get("result") or []
-                            for it in lst or []:
-                                if isinstance(it, dict):
-                                    u = it.get("url") or it.get("video_url")
-                                    if u:
-                                        return u
-                            return js.get("url") or js.get("videoUrl")
-                        if status in ("failed", "error"):
-                            return None
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    headers={"Authorization": f"Bearer {POLLO_API_KEY}"},
+                    json={"prompt": prompt}
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data.get("video_url")
         except Exception:
             return None
         return None
 
     async def send_video_illustration(self, bot: Bot, chat_id: int, situation: str, answer: str) -> bool:
+        """Отправка видео для ситуации и ответа."""
         prompt = create_video_prompt(situation, answer)
+
+        # Пока основа — PollO.ai
         url = await self._try_pollo_video(prompt)
+
         if not url:
-            return False
-        try:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(url, timeout=180) as r:
-                    if r.status != 200:
-                        return False
-                    data = await r.read()
-            await bot.send_video(chat_id, video=BufferedInputFile(data, filename="round.mp4"), caption=answer, duration=6)
-            return True
-        except Exception:
+            await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать видео.")
             return False
 
-# ====== Экземпляры (после объявлений классов) ======
-decks = DeckManager(base=Path(__file__).resolve().parent)
-gen = GameImageGenerator()
-video_gen = GameVideoGenerator()
+        await bot.send_video(chat_id, url)
+        return True
