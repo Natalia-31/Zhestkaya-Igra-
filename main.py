@@ -1,36 +1,29 @@
 import os
-import asyncio
 import inspect
-import pathlib
+import asyncio
 import logging
-
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 import openai
 
-from handlers.game_handlers import router as game_router
 import game_utils
+from config import OPENAI_API_KEY, OPENAI_SETTINGS
+from handlers.game_handlers import router as game_router
 
 # Логирование
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO)
+
 
 async def main():
-    # Загрузка переменных окружения
+    # Загрузка .env и проверка ключей
     load_dotenv()
-
     BOT_TOKEN = os.getenv("BOT_TOKEN")
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN не задан в .env")
-
+        raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
     if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY не задан в .env")
+        raise RuntimeError("OPENAI_API_KEY не задан в переменных окружения")
 
     # Инициализация OpenAI
     openai.api_key = OPENAI_API_KEY
@@ -38,20 +31,17 @@ async def main():
     # Отладочная информация
     print("CWD:", os.getcwd())
     print("game_utils file:", inspect.getfile(game_utils))
-    print("situations path:", pathlib.Path(game_utils.decks.sit_path))
-    print("answers path:", pathlib.Path(game_utils.decks.ans_path))
-    print("situations loaded:", len(game_utils.decks.situations))
-    print("answers loaded:", len(game_utils.decks.answers))
 
     # Инициализация бота
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=None))
     dp = Dispatcher(storage=MemoryStorage())
 
-    # Подключение роутеров
+    # Подключаем роутеры
     dp.include_router(game_router)
 
-    # Запуск
+    # Запускаем бота
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
