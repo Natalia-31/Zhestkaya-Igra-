@@ -1,6 +1,9 @@
+# game_utils.py
+
 import os
 import json
 import random
+import asyncio
 from pathlib import Path
 from io import BytesIO
 from typing import List, Optional
@@ -9,20 +12,21 @@ import aiohttp
 from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
-import openai
+from openai import OpenAI
+from config import OPENAI_API_KEY, OPENAI_SETTINGS
 
-# ====== Загрузка переменных окружения ======
+# ====== Environment ======
 load_dotenv()
 NANO_API_KEY   = os.getenv("NANO_API_KEY")
-HORDE_API_KEY  = os.getenv("HORDE_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+POLLO_API_KEY  = os.getenv("POLLO_API_KEY")
 
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY не задан в окружении")
 
-openai.api_key = OPENAI_API_KEY
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-# ====== Менеджер колод ======
+
+# ====== Deck Manager ======
 class DeckManager:
     def __init__(
         self,
@@ -54,16 +58,15 @@ class DeckManager:
         return []
 
     def get_random_situation(self) -> str:
-        if not self.situations:
-            return "Тестовая ситуация"
-        return random.choice(self.situations)
+        return random.choice(self.situations) if self.situations else "Тестовая ситуация"
 
     def get_new_shuffled_answers_deck(self) -> List[str]:
         deck = list(self.answers)
         random.shuffle(deck)
         return deck
 
-# ====== Промпты ======
+
+# ====== Prompt Helpers ======
 def _translate_to_en(text: str) -> str:
     if any(ord(c) > 127 for c in text):
         try:
@@ -73,10 +76,12 @@ def _translate_to_en(text: str) -> str:
             pass
     return text
 
+
 def create_image_prompt(situation: str, answer: str) -> str:
     sit = _translate_to_en(situation.replace("_____", "").strip())
     ans = _translate_to_en(answer.strip())
     return f"{sit} - {ans}, cartoon, colorful, simple shapes, expressive"
+
 
 def create_video_prompt(situation: str, answer: str) -> str:
     sit = _translate_to_en(situation.replace("_____", "").strip())
@@ -86,7 +91,8 @@ def create_video_prompt(situation: str, answer: str) -> str:
         "smooth animation, colorful, expressive characters"
     )
 
-# ====== Генератор изображений ======
+
+# ====== Image Generator ======
 class GameImageGenerator:
     async def _try_pollinations(self, prompt: str) -> Optional[BytesIO]:
         url = f"https://image.pollinations.ai/prompt/{aiohttp.helpers.quote(prompt)}?width=512&height=512"
@@ -102,12 +108,12 @@ class GameImageGenerator:
     async def _try_nanobanana(self, prompt: str) -> Optional[BytesIO]:
         if not NANO_API_KEY:
             return None
-        url = "https://api.nanobanana.ai/v1/generate"
+        api_url = "https://api.nanobanana.ai/v1/generate"
         headers = {"Authorization": f"Bearer {NANO_API_KEY}"}
         payload = {"prompt": prompt, "model": "sdxl", "width": 512, "height": 512}
         try:
             async with aiohttp.ClientSession() as s:
-                async with s.post(url, json=payload, headers=headers, timeout=60) as r:
+                async with s.post(api_url, json=payload, headers=headers, timeout=60) as r:
                     if r.status != 200:
                         return None
                     data = await r.json()
@@ -122,7 +128,11 @@ class GameImageGenerator:
         return None
 
     async def send_illustration(
-        self, bot: Bot, chat_id: int, situation: str, answer: Optional[str] = None
+        self,
+        bot: Bot,
+        chat_id: int,
+        situation: str,
+        answer: Optional[str] = None
     ) -> bool:
         if not answer:
             await bot.send_message(chat_id, "⚠️ Нет ответа для генерации изображения.")
@@ -131,9 +141,9 @@ class GameImageGenerator:
         prompt = create_image_prompt(situation, answer)
         img_stream: Optional[BytesIO] = None
 
-        # OpenAI Image API
+        # OpenAI Image API v1
         try:
-            img_resp = await openai.Image.acreate(prompt=prompt, n=1, size="512x512")
+            img_resp = await client.images.generate(prompt=prompt, n=1, size="512x512")
             url = img_resp.data[0].url
             async with aiohttp.ClientSession() as s:
                 async with s.get(url, timeout=30) as r:
@@ -142,7 +152,7 @@ class GameImageGenerator:
         except Exception:
             img_stream = None
 
-        # Фолбэк
+        # Fallback
         if not img_stream:
             img_stream = await self._try_pollinations(prompt) or await self._try_nanobanana(prompt)
 
@@ -154,10 +164,11 @@ class GameImageGenerator:
         await bot.send_photo(chat_id, photo=BufferedInputFile(img_stream.read(), filename="illustration.png"))
         return True
 
-# ====== Генератор видео ======
+
+# ====== Video Generator ======
 class GameVideoGenerator:
     def __init__(self):
-        self.pollo_key = HORDE_API_KEY
+        self.pollo_key = POLLO_API_KEY
         self.pollo_url = "https://pollo.ai/api/platform/generation/minimax/video-01"
 
     async def _try_pollo_video(self, prompt: str) -> Optional[str]:
@@ -200,7 +211,8 @@ class GameVideoGenerator:
         await bot.send_video(chat_id, video=BufferedInputFile(data, filename="round.mp4"), caption=answer, duration=6)
         return True
 
-# ====== Экземпляры ======
+
+# ====== Instances ======
 decks = DeckManager(base=Path(__file__).resolve().parent)
 image_gen = GameImageGenerator()
 video_gen = GameVideoGenerator()
