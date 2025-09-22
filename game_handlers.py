@@ -1,13 +1,13 @@
 from typing import Dict, Any
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command, CommandStart
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
 
 import openai
 from config import OPENAI_SETTINGS, OPENAI_API_KEY
 
-from game_utils import video_gen
+from game_utils import image_gen
 
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
@@ -59,16 +59,8 @@ async def on_pick(cb: CallbackQuery):
         )
         image_url = img_resp.data[0].url
 
-        # Отправка видео (ситуация + ответ)
-        await video_gen.send_video_illustration(
-            cb.bot,
-            group_chat_id,
-            st["current_situation"],
-            win_ans
-        )
-
-        # Отправляем картинку отдельно
+        # Отправляем картинку
         await cb.bot.send_photo(group_chat_id, image_url)
 
     except Exception as e:
-        await cb.bot.send_message(group_chat_id, f"⚠️ Не удалось сгенерировать видео: {e}")
+        await cb.bot.send_message(group_chat_id, f"⚠️ Не удалось сгенерировать картинку: {e}")
