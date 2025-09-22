@@ -7,7 +7,7 @@ from aiogram.exceptions import TelegramBadRequest
 import openai
 from config import OPENAI_SETTINGS, OPENAI_API_KEY
 
-from game_utils import decks, video_gen
+from game_utils import video_gen
 
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
@@ -50,7 +50,7 @@ async def on_pick(cb: CallbackQuery):
         return
 
     try:
-        # Опционально: иллюстрация через OpenAI
+        # Генерация иллюстрации через OpenAI
         openai.api_key = OPENAI_API_KEY
         img_resp = await openai.Image.acreate(
             prompt=f"{st['current_situation']} {win_ans}",
@@ -59,12 +59,16 @@ async def on_pick(cb: CallbackQuery):
         )
         image_url = img_resp.data[0].url
 
+        # Отправка видео (ситуация + ответ)
         await video_gen.send_video_illustration(
             cb.bot,
             group_chat_id,
             st["current_situation"],
-            win_ans,
-            image_url  # если у тебя видео_ген поддерживает ещё и картинку
+            win_ans
         )
+
+        # Отправляем картинку отдельно
+        await cb.bot.send_photo(group_chat_id, image_url)
+
     except Exception as e:
         await cb.bot.send_message(group_chat_id, f"⚠️ Не удалось сгенерировать видео: {e}")
