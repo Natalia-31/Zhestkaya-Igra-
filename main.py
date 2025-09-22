@@ -4,17 +4,13 @@ import pathlib
 import game_utils
 import asyncio
 import logging
-
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
-
 import openai
 from config import OPENAI_API_KEY, OPENAI_SETTINGS
-
 from handlers.game_handlers import router as game_router
-
 logging.basicConfig(level=logging.INFO)
 
 async def main():
