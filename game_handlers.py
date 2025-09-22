@@ -1,216 +1,250 @@
-import os
-import json
-import random
-import asyncio
-from pathlib import Path
-from io import BytesIO
-from typing import List, Optional
+# handlers/game_handlers.py
 
-import aiohttp
-from dotenv import load_dotenv
-from aiogram import Bot
-from aiogram.types import BufferedInputFile
+from typing import Dict, Any
+from aiogram import Router, F, Bot
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command, CommandStart
+from aiogram.exceptions import TelegramBadRequest
+
 from openai import OpenAI
 from config import OPENAI_API_KEY, OPENAI_SETTINGS
 
-# ====== Environment ======
-load_dotenv()
-NANO_API_KEY   = os.getenv("NANO_API_KEY")
-POLLO_API_KEY  = os.getenv("POLLO_API_KEY")
+from game_utils import decks, image_gen, video_gen
 
-if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY не задан в окружении")
+router = Router()
+SESSIONS: Dict[int, Dict[str, Any]] = {}
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-# ====== Deck Manager ======
-class DeckManager:
-    def __init__(
-        self,
-        situations_file: str = "situations.json",
-        answers_file: str = "answers.json",
-        base: Path | None = None
-    ):
-        self.base_dir = base or Path(__file__).parent
-        self.sit_path = (self.base_dir / situations_file).resolve()
-        self.ans_path = (self.base_dir / answers_file).resolve()
-        self.situations = self._load_list(self.sit_path)
-        self.answers    = self._load_list(self.ans_path)
-
-    def _load_list(self, file_path: Path) -> List[str]:
-        for enc in ("utf-8-sig", "utf-8"):
-            try:
-                data = json.loads(file_path.read_text(encoding=enc))
-                if isinstance(data, list):
-                    seen, out = set(), []
-                    for x in data:
-                        if isinstance(x, str):
-                            x = x.strip()
-                            if x and x not in seen:
-                                seen.add(x)
-                                out.append(x)
-                    return out
-            except Exception:
-                continue
-        return []
-
-    def get_random_situation(self) -> str:
-        return random.choice(self.situations) if self.situations else "Тестовая ситуация"
-
-    def get_new_shuffled_answers_deck(self) -> List[str]:
-        deck = list(self.answers)
-        random.shuffle(deck)
-        return deck
+def main_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Начать игру", callback_data="ui_new_game")],
+        [InlineKeyboardButton(text="➕ Присоединиться", callback_data="ui_join_game")],
+        [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")],
+    ])
 
 
-# ====== Prompt Helpers ======
-def _translate_to_en(text: str) -> str:
-    if any(ord(c) > 127 for c in text):
+@router.message(CommandStart())
+async def cmd_start(m: Message):
+    await m.answer("Жесткая Игра. Используйте меню.", reply_markup=main_menu())
+
+
+@router.message(Command("new_game"))
+async def cmd_new_game(m: Message):
+    await _create_game(m.chat.id, m.from_user.id, m.from_user.full_name)
+    await m.answer("✅ Игра начата!", reply_markup=main_menu())
+
+
+@router.message(Command("join_game"))
+async def cmd_join_game(m: Message, bot: Bot):
+    await _join_flow(m.chat.id, m.from_user.id, m.from_user.full_name, bot, feedback=m)
+
+
+@router.message(Command("start_round"))
+async def cmd_start_round(m: Message):
+    await _start_round(m.bot, m.chat.id)
+
+
+@router.callback_query(F.data == "ui_new_game")
+async def ui_new_game(cb: CallbackQuery):
+    await _create_game(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name)
+    await cb.answer()
+    try:
+        await cb.message.edit_text("✅ Игра начата!", reply_markup=main_menu())
+    except TelegramBadRequest:
+        pass
+
+
+@router.callback_query(F.data == "ui_join_game")
+async def ui_join_game(cb: CallbackQuery, bot: Bot):
+    await _join_flow(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name, bot, feedback=cb.message)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "ui_start_round")
+async def ui_start_round(cb: CallbackQuery):
+    await cb.answer()
+    await _start_round(cb.bot, cb.message.chat.id)
+
+
+async def _create_game(chat_id: int, host_id: int, host_name: str):
+    SESSIONS[chat_id] = {
+        "players": [{"user_id": host_id, "username": host_name}],
+        "hands": {},
+        "answers": {},
+        "host_idx": 0,
+        "current_situation": None,
+        "main_deck": [],
+        "used_answers": []
+    }
+
+
+async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedback: Message):
+    st = SESSIONS.get(chat_id)
+    if not st:
+        await feedback.answer("Сначала нажмите «Начать игру».", reply_markup=main_menu())
+        return
+    if user_id not in [p["user_id"] for p in st["players"]]:
         try:
-            from googletrans import Translator
-            return Translator().translate(text, dest="en").text
-        except Exception:
-            pass
-    return text
+            await bot.send_message(user_id, "Вы присоединились к игре! Ожидайте начала раунда.")
+        except TelegramBadRequest as e:
+            await feedback.answer(f"⚠️ {user_name}, нажмите Start у бота и повторите. {e}")
+            return
+        st["players"].append({"user_id": user_id, "username": user_name})
+    await feedback.answer(f"✅ Игроков: {len(st['players'])}", reply_markup=main_menu())
 
 
-def create_image_prompt(situation: str, answer: str) -> str:
-    sit = _translate_to_en(situation.replace("_____", "").strip())
-    ans = _translate_to_en(answer.strip())
-    return f"{sit} - {ans}, cartoon, colorful, simple shapes, expressive"
+async def _start_round(bot: Bot, chat_id: int):
+    st = SESSIONS.get(chat_id)
+    if not st or len(st["players"]) < 2:
+        await bot.send_message(chat_id, "Нужно минимум 2 игрока.", reply_markup=main_menu())
+        return
 
+    st["answers"].clear()
+    st["hands"].clear()
+    st["host_idx"] = (st["host_idx"] + 1) % len(st["players"])
+    host = st["players"][st["host_idx"]]
+    host_id = host["user_id"]
 
-def create_video_prompt(situation: str, answer: str) -> str:
-    sit = _translate_to_en(situation.replace("_____", "").strip())
-    ans = _translate_to_en(answer.strip())
-    return (
-        f"6-second cartoon: scene shows {ans} responding to {sit}, "
-        "smooth animation, colorful, expressive characters"
+    # Генерация ситуации через OpenAI v1 client
+    resp = await client.chat.completions.create(
+        model=OPENAI_SETTINGS["MODEL"],
+        messages=[{"role": "system", "content": "Придумай забавную ситуацию для карточной игры."}],
+        max_tokens=OPENAI_SETTINGS["MAX_TOKENS"],
+        temperature=OPENAI_SETTINGS["TEMPERATURE"],
+    )
+    st["current_situation"] = resp.choices[0].message.content
+
+    await bot.send_message(
+        chat_id,
+        f"🎬 Раунд! 👑 Ведущий: {host['username']}\n\n🎲 {st['current_situation']}"
     )
 
+    full_deck = decks.get_new_shuffled_answers_deck()
+    st["main_deck"] = [c for c in full_deck if c not in st["used_answers"]]
+    if not st["main_deck"]:
+        await bot.send_message(chat_id, "⚠️ Нет доступных карт в колоде.")
+        return
 
-# ====== Image Generator ======
-class GameImageGenerator:
-    async def _try_pollinations(self, prompt: str) -> Optional[BytesIO]:
-        url = f"https://image.pollinations.ai/prompt/{aiohttp.helpers.quote(prompt)}?width=512&height=512"
+    for p in st["players"]:
+        uid = p["user_id"]
+        if uid == host_id:
+            continue
+        hand = []
+        while len(hand) < 10 and st["main_deck"]:
+            hand.append(st["main_deck"].pop())
+        st["hands"][uid] = hand
+
+    for p in st["players"]:
+        uid = p["user_id"]
+        if uid == host_id:
+            continue
+        hand = st["hands"].get(uid, [])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=card, callback_data=f"ans:{chat_id}:{uid}:{i}")]
+            for i, card in enumerate(hand)
+        ])
         try:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(url, timeout=20) as r:
-                    if r.status == 200:
-                        return BytesIO(await r.read())
-        except Exception:
-            pass
-        return None
-
-    async def _try_nanobanana(self, prompt: str) -> Optional[BytesIO]:
-        if not NANO_API_KEY:
-            return None
-        api_url = "https://api.nanobanana.ai/v1/generate"
-        headers = {"Authorization": f"Bearer {NANO_API_KEY}"}
-        payload = {"prompt": prompt, "model": "sdxl", "width": 512, "height": 512}
-        try:
-            async with aiohttp.ClientSession() as s:
-                async with s.post(api_url, json=payload, headers=headers, timeout=60) as r:
-                    if r.status != 200:
-                        return None
-                    data = await r.json()
-                    img_url = data.get("image_url") or data.get("url")
-                if img_url:
-                    async with aiohttp.ClientSession() as s2:
-                        async with s2.get(img_url, timeout=60) as r2:
-                            if r2.status == 200:
-                                return BytesIO(await r2.read())
-        except Exception:
-            pass
-        return None
-
-    async def send_illustration(
-        self,
-        bot: Bot,
-        chat_id: int,
-        situation: str,
-        answer: Optional[str] = None
-    ) -> bool:
-        if not answer:
-            await bot.send_message(chat_id, "⚠️ Нет ответа для генерации изображения.")
-            return False
-
-        prompt = create_image_prompt(situation, answer)
-        img_stream: Optional[BytesIO] = None
-
-        # OpenAI Image API v1
-        try:
-            img_resp = await client.images.generate(prompt=prompt, n=1, size="512x512")
-            url = img_resp.data[0].url
-            async with aiohttp.ClientSession() as s:
-                async with s.get(url, timeout=30) as r:
-                    if r.status == 200:
-                        img_stream = BytesIO(await r.read())
-        except Exception:
-            img_stream = None
-
-        # Fallback
-        if not img_stream:
-            img_stream = await self._try_pollinations(prompt) or await self._try_nanobanana(prompt)
-
-        if not img_stream:
-            await bot.send_message(chat_id, "⚠️ Не удалось сгенерировать изображение.")
-            return False
-
-        img_stream.seek(0)
-        await bot.send_photo(chat_id, photo=BufferedInputFile(img_stream.read(), filename="illustration.png"))
-        return True
+            msg = f"🎲 Ситуация: {st['current_situation']}\n\n🎴 Ваша рука ({len(hand)}). Выберите ответ:"
+            await bot.send_message(uid, msg, reply_markup=kb)
+        except TelegramBadRequest:
+            await bot.send_message(chat_id, f"⚠️ Не могу написать игроку {p['username']}.")
 
 
-# ====== Video Generator ======
-class GameVideoGenerator:
-    def __init__(self):
-        self.pollo_key = POLLO_API_KEY
-        self.pollo_url = "https://pollo.ai/api/platform/generation/minimax/video-01"
+@router.callback_query(F.data.startswith("ans:"))
+async def on_answer(cb: CallbackQuery):
+    _, group_chat_id_str, uid_str, idx_str = cb.data.split(":")
+    group_chat_id, uid, idx = int(group_chat_id_str), int(uid_str), int(idx_str)
+    st = SESSIONS.get(group_chat_id)
+    if not st:
+        await cb.answer("Игра не найдена.", show_alert=True)
+        return
 
-    async def _try_pollo_video(self, prompt: str) -> Optional[str]:
-        if not self.pollo_key:
-            return None
-        headers = {"Content-Type": "application/json", "x-api-key": self.pollo_key}
-        async with aiohttp.ClientSession() as s:
-            async with s.post(self.pollo_url, json={"input": {"prompt": prompt}}, headers=headers, timeout=60) as r:
-                if r.status != 200:
-                    return None
-                data = await r.json()
-                task_id = data.get("taskId") or data.get("id")
-        if not task_id:
-            return None
-        status_url = f"https://pollo.ai/api/platform/generation/{task_id}/status"
-        for _ in range(36):
-            await asyncio.sleep(10)
-            async with aiohttp.ClientSession() as s2:
-                async with s2.get(status_url, headers=headers, timeout=30) as st:
-                    if st.status == 200:
-                        js = await st.json()
-                        status = js.get("status") or js.get("state")
-                        if status in ("completed", "succeeded", "success"):
-                            out = js.get("output") or {}
-                            return out.get("url") or out.get("video_url")
-                        if status in ("failed", "error"):
-                            return None
-        return None
+    host_id = st["players"][st["host_idx"]]["user_id"]
+    if cb.from_user.id != uid or uid == host_id:
+        await cb.answer("Вы не можете отвечать.", show_alert=True)
+        return
 
-    async def send_video_illustration(self, bot: Bot, chat_id: int, situation: str, answer: str) -> bool:
-        prompt = create_video_prompt(situation, answer)
-        url = await self._try_pollo_video(prompt)
-        if not url:
-            return False
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=180) as r:
-                if r.status != 200:
-                    return False
-                data = await r.read()
-        await bot.send_video(chat_id, video=BufferedInputFile(data, filename="round.mp4"), caption=answer, duration=6)
-        return True
+    hand = st["hands"].get(uid, [])
+    if idx < 0 or idx >= len(hand):
+        await cb.answer("Неверный выбор.", show_alert=True)
+        return
+
+    card = hand.pop(idx)
+    st["answers"][uid] = card
+    st["used_answers"].append(card)
+    await cb.answer(f"Вы выбрали: {card}")
+
+    need = len(st["players"]) - 1
+    if len(st["answers"]) >= need:
+        ordered = [(u, st["answers"][u]) for u in st["answers"]]
+        lines, buttons = [], []
+        for i, (u2, ans) in enumerate(ordered, 1):
+            name = next(p["username"] for p in st["players"] if p["user_id"] == u2)
+            lines.append(f"{i}. {name} — {ans}")
+            buttons.append([InlineKeyboardButton(text=str(i), callback_data=f"pick:{group_chat_id}:{i-1}")])
+        await cb.bot.send_message(
+            group_chat_id,
+            "Ответы игроков:\n" + "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
 
 
-# ====== Instances ======
-decks = DeckManager(base=Path(__file__).resolve().parent)
-image_gen = GameImageGenerator()
-video_gen = GameVideoGenerator()
+@router.callback_query(F.data.startswith("pick:"))
+async def on_pick(cb: CallbackQuery):
+    _, group_chat_id_str, idx_str = cb.data.split(":")
+    group_chat_id, idx = int(group_chat_id_str), int(idx_str)
+    st = SESSIONS.get(group_chat_id)
+    if not st:
+        await cb.answer("Игра не найдена.", show_alert=True)
+        return
+
+    host_id = st["players"][st["host_idx"]]["user_id"]
+    if cb.from_user.id != host_id:
+        await cb.answer("Только ведущий может выбирать.", show_alert=True)
+        return
+
+    ordered = [(u, st["answers"][u]) for u in st["answers"]]
+    if idx < 0 or idx >= len(ordered):
+        await cb.answer("Неверный индекс.", show_alert=True)
+        return
+
+    win_uid, win_ans = ordered[idx]
+    win_name = next(p["username"] for p in st["players"] if p["user_id"] == win_uid)
+
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+    await cb.message.edit_text(f"🏆 Победитель: {win_name}\nОтвет: {win_ans}")
+
+    try:
+        # Иллус и видео
+        await image_gen.send_illustration(cb.bot, group_chat_id, st["current_situation"], win_ans)
+        await video_gen.send_video_illustration(cb.bot, group_chat_id, st["current_situation"], win_ans)
+    except Exception as e:
+        await cb.bot.send_message(group_chat_id, f"⚠️ Ошибка иллюстраций: {e}")
+
+    for p in st["players"]:
+        uid2 = p["user_id"]
+        if uid2 == host_id:
+            continue
+        if not st["main_deck"]:
+            full = decks.get_new_shuffled_answers_deck()
+            used = st["used_answers"]
+            in_hands = [c for hand in st["hands"].values() for c in hand]
+            st["main_deck"] = [c for c in full if c not in used and c not in in_hands]
+        if st["main_deck"]:
+            new_card = st["main_deck"].pop()
+            st["hands"].setdefault(uid2, []).append(new_card)
+            try:
+                await cb.bot.send_message(
+                    uid2,
+                    f"🎴 Вы добрали карту: **{new_card}**\nТеперь у вас {len(st['hands'][uid2])} карт.",
+                    parse_mode="Markdown"
+                )
+            except TelegramBadRequest:
+                pass
+
+    await cb.bot.send_message(group_chat_id, "Раунд завершён.", reply_markup=main_menu())
