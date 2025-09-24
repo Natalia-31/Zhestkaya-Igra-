@@ -9,7 +9,7 @@ from aiogram.exceptions import TelegramBadRequest
 from config import OPENAI_SETTINGS
 from game_utils import generate_image_bytes
 from image_generator import create_card
-from decks import get_new_shuffled_answers_deck
+from database_models import get_new_shuffled_answers_deck  # <-- убедитесь, что функция определена здесь
 
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
@@ -94,7 +94,7 @@ async def _start_round(bot: Bot, chat_id: int):
     host = st["players"][st["host_idx"]]
     host_id = host["user_id"]
 
-    # Предварительно сгенерированная ситуация
+    # Заранее заготовленная ситуация
     situation = "Придумайте забавную ситуацию для карточной игры."
     st["current_situation"] = situation
 
@@ -109,7 +109,6 @@ async def _start_round(bot: Bot, chat_id: int):
         await bot.send_message(chat_id, "⚠️ Нет доступных карт в колоде.")
         return
 
-    # Раздача карт
     hand_size = OPENAI_SETTINGS.get("HAND_SIZE", 10)
     for p in st["players"]:
         uid = p["user_id"]
@@ -117,7 +116,6 @@ async def _start_round(bot: Bot, chat_id: int):
             continue
         st["hands"][uid] = [st["main_deck"].pop() for _ in range(min(hand_size, len(st["main_deck"])))]
 
-    # Отправка карт игрокам
     for p in st["players"]:
         uid = p["user_id"]
         if uid == host_id:
@@ -188,10 +186,6 @@ async def on_pick(cb: CallbackQuery):
         return
 
     ordered = list(st["answers"].items())
-    if idx < 0 or idx >= len(ordered):
-        await cb.answer("Неверный индекс.", show_alert=True)
-        return
-
     win_uid, win_ans = ordered[idx]
     win_name = next(p["username"] for p in st["players"] if p["user_id"] == win_uid)
 
@@ -201,9 +195,9 @@ async def on_pick(cb: CallbackQuery):
         pass
     await cb.message.edit_text(f"🏆 Победитель: {win_name}\nОтвет: {win_ans}")
 
-    # Генерация и отправка иллюстрации
+    # Отправка иллюстрации
     try:
-        img_bytes = generate_image_bytes(f"{st['current_situation']} Ответ: {win_ans}")
+        img_bytes = generate_image_bytes(f"{situation} Ответ: {win_ans}")
         if img_bytes:
             await cb.bot.send_photo(group_chat_id, img_bytes)
     except Exception as e:
