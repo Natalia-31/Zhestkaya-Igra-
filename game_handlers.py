@@ -1,6 +1,10 @@
 # handlers/game_handlers.py
 
 from typing import Dict, Any
+from pathlib import Path
+import json
+import random
+
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command, CommandStart
@@ -9,10 +13,15 @@ from aiogram.exceptions import TelegramBadRequest
 from config import OPENAI_SETTINGS
 from game_utils import generate_image_bytes
 from image_generator import create_card
-from database_models import get_new_shuffled_answers_deck  # <-- убедитесь, что функция определена здесь
 
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
+
+# Загрузка всех ответов (карт) из JSON
+CARDS_FILE = Path(__file__).parent.parent / "cards.json"
+with open(CARDS_FILE, encoding="utf-8") as f:
+    ALL_ANSWERS = json.load(f)
+
 
 def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -21,22 +30,27 @@ def main_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")],
     ])
 
+
 @router.message(CommandStart())
 async def cmd_start(m: Message):
     await m.answer("Жесткая Игра. Используйте меню.", reply_markup=main_menu())
+
 
 @router.message(Command("new_game"))
 async def cmd_new_game(m: Message):
     await _create_game(m.chat.id, m.from_user.id, m.from_user.full_name)
     await m.answer("✅ Игра начата!", reply_markup=main_menu())
 
+
 @router.message(Command("join_game"))
 async def cmd_join_game(m: Message, bot: Bot):
     await _join_flow(m.chat.id, m.from_user.id, m.from_user.full_name, bot, feedback=m)
 
+
 @router.message(Command("start_round"))
 async def cmd_start_round(m: Message):
     await _start_round(m.bot, m.chat.id)
+
 
 @router.callback_query(F.data == "ui_new_game")
 async def ui_new_game(cb: CallbackQuery):
@@ -47,15 +61,18 @@ async def ui_new_game(cb: CallbackQuery):
     except TelegramBadRequest:
         pass
 
+
 @router.callback_query(F.data == "ui_join_game")
 async def ui_join_game(cb: CallbackQuery, bot: Bot):
     await _join_flow(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name, bot, feedback=cb.message)
     await cb.answer()
 
+
 @router.callback_query(F.data == "ui_start_round")
 async def ui_start_round(cb: CallbackQuery):
     await cb.answer()
     await _start_round(cb.bot, cb.message.chat.id)
+
 
 async def _create_game(chat_id: int, host_id: int, host_name: str):
     SESSIONS[chat_id] = {
@@ -67,6 +84,7 @@ async def _create_game(chat_id: int, host_id: int, host_name: str):
         "main_deck": [],
         "used_answers": []
     }
+
 
 async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedback: Message):
     st = SESSIONS.get(chat_id)
@@ -82,6 +100,7 @@ async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedb
         st["players"].append({"user_id": user_id, "username": user_name})
     await feedback.answer(f"✅ Игроков: {len(st['players'])}", reply_markup=main_menu())
 
+
 async def _start_round(bot: Bot, chat_id: int):
     st = SESSIONS.get(chat_id)
     if not st or len(st["players"]) < 2:
@@ -94,7 +113,7 @@ async def _start_round(bot: Bot, chat_id: int):
     host = st["players"][st["host_idx"]]
     host_id = host["user_id"]
 
-    # Заранее заготовленная ситуация
+    # Заготовленная ситуация
     situation = "Придумайте забавную ситуацию для карточной игры."
     st["current_situation"] = situation
 
@@ -103,8 +122,11 @@ async def _start_round(bot: Bot, chat_id: int):
         f"🎬 Раунд! 👑 Ведущий: {host['username']}\n\n🎲 {situation}"
     )
 
-    full_deck = get_new_shuffled_answers_deck()
-    st["main_deck"] = [c for c in full_deck if c not in st["used_answers"]]
+    # Собираем и перемешиваем колоду
+    deck = [c for c in ALL_ANSWERS if c not in st["used_answers"]]
+    random.shuffle(deck)
+    st["main_deck"] = deck
+
     if not st["main_deck"]:
         await bot.send_message(chat_id, "⚠️ Нет доступных карт в колоде.")
         return
@@ -133,6 +155,7 @@ async def _start_round(bot: Bot, chat_id: int):
             )
         except TelegramBadRequest:
             await bot.send_message(chat_id, f"⚠️ Не могу написать игроку {p['username']}.")
+
 
 @router.callback_query(F.data.startswith("ans:"))
 async def on_answer(cb: CallbackQuery):
@@ -171,6 +194,7 @@ async def on_answer(cb: CallbackQuery):
             reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
 
+
 @router.callback_query(F.data.startswith("pick:"))
 async def on_pick(cb: CallbackQuery):
     _, gcid, idx = cb.data.split(":")
@@ -197,7 +221,7 @@ async def on_pick(cb: CallbackQuery):
 
     # Отправка иллюстрации
     try:
-        img_bytes = generate_image_bytes(f"{situation} Ответ: {win_ans}")
+        img_bytes = generate_image_bytes(f"{st['current_situation']} Ответ: {win_ans}")
         if img_bytes:
             await cb.bot.send_photo(group_chat_id, img_bytes)
     except Exception as e:
@@ -209,10 +233,9 @@ async def on_pick(cb: CallbackQuery):
         if uid2 == host_id:
             continue
         if not st["main_deck"]:
-            full = get_new_shuffled_answers_deck()
-            used = set(st["used_answers"])
-            in_hands = {c for hand in st["hands"].values() for c in hand}
-            st["main_deck"] = [c for c in full if c not in used and c not in in_hands]
+            deck = [c for c in ALL_ANSWERS if c not in st["used_answers"]]
+            random.shuffle(deck)
+            st["main_deck"] = deck
         if st["main_deck"]:
             new_card = st["main_deck"].pop()
             st["hands"].setdefault(uid2, []).append(new_card)
