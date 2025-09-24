@@ -6,10 +6,9 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.filters import Command, CommandStart
 from aiogram.exceptions import TelegramBadRequest
 
-from config import OPENAI_SETTINGS  # убрать OPENAI_API_KEY
+from config import OPENAI_SETTINGS
 from game_utils import generate_image_bytes
 from image_generator import create_card
-from video_generator import create_video  # если нужен видео-генератор
 from decks import get_new_shuffled_answers_deck
 
 router = Router()
@@ -95,7 +94,7 @@ async def _start_round(bot: Bot, chat_id: int):
     host = st["players"][st["host_idx"]]
     host_id = host["user_id"]
 
-    # Генерация ситуации локально (или предзаготовленная)
+    # Предварительно сгенерированная ситуация
     situation = "Придумайте забавную ситуацию для карточной игры."
     st["current_situation"] = situation
 
@@ -111,14 +110,12 @@ async def _start_round(bot: Bot, chat_id: int):
         return
 
     # Раздача карт
+    hand_size = OPENAI_SETTINGS.get("HAND_SIZE", 10)
     for p in st["players"]:
         uid = p["user_id"]
         if uid == host_id:
             continue
-        hand = []
-        while len(hand) < OPENAI_SETTINGS.get("HAND_SIZE", 10) and st["main_deck"]:
-            hand.append(st["main_deck"].pop())
-        st["hands"][uid] = hand
+        st["hands"][uid] = [st["main_deck"].pop() for _ in range(min(hand_size, len(st["main_deck"])))]
 
     # Отправка карт игрокам
     for p in st["players"]:
@@ -209,9 +206,6 @@ async def on_pick(cb: CallbackQuery):
         img_bytes = generate_image_bytes(f"{st['current_situation']} Ответ: {win_ans}")
         if img_bytes:
             await cb.bot.send_photo(group_chat_id, img_bytes)
-        # видео если нужно
-        # video_bytes = create_video(...)
-        # await cb.bot.send_video(group_chat_id, video_bytes)
     except Exception as e:
         await cb.bot.send_message(group_chat_id, f"⚠️ Ошибка иллюстрации: {e}")
 
