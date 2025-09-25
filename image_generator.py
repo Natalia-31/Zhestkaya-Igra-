@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Optional
 from PIL import Image, ImageDraw, ImageFont
 import requests
+import base64
+import os
 
 # Пути
 BASE_DIR = Path(__file__).parent
@@ -21,9 +23,9 @@ PALETTES = [
 # 🎭 Эмодзи для украшения
 EMOJIS = ["😂", "🔥", "🎭", "🍷", "👑", "💥", "🤯", "✨"]
 
-# Адрес локального HTTP-сервиса генерации
-API_URL = "http://localhost:5000/generate"
-
+# ➡️ Gemini (Google) API настройки
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or "ВАШ_API_КЛЮЧ"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent"
 
 def wrap(text: str, width: int = 25) -> list[str]:
     words, lines, buf = text.split(), [], []
@@ -36,11 +38,8 @@ def wrap(text: str, width: int = 25) -> list[str]:
         lines.append(" ".join(buf))
     return lines
 
-
 def generate_image_file(situation: str, answer: str, out_path: Path) -> Optional[Path]:
-    """
-    Старая локальная генерация картинок библиотекой Pillow.
-    """
+    # стандартная генерация Pillow, без изменений
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         bg_color, accent_color = random.choice(PALETTES)
@@ -82,36 +81,59 @@ def generate_image_file(situation: str, answer: str, out_path: Path) -> Optional
         print(f"Ошибка генерации карточки: {e}")
         return None
 
-
-def generate_image_via_api(prompt: str) -> Optional[bytes]:
+def generate_image_via_gemini(prompt: str) -> Optional[bytes]:
     """
-    Генерация картинки через локальный Flask-сервис.
+    Генерация изображения через Gemini API (Google’s multimodal model)
     """
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": GEMINI_API_KEY,
+    }
+    data = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ]
+    }
     try:
-        resp = requests.post(API_URL, json={"prompt": prompt})
-        resp.raise_for_status()
-        return resp.content
+        r = requests.post(GEMINI_URL, headers=headers, json=data)
+        r.raise_for_status()
+        response_json = r.json()
+        # Проверьте структуру ответа — может отличаться, ниже типовой паттерн
+        # Распечатаем ответ для отладки:
+        # print(response_json)
+        parts = response_json.get("candidates", [])[0]["content"]["parts"]
+        for part in parts:
+            if "inlineData" in part:
+                img_b64 = part["inlineData"].get("data")
+                if img_b64:
+                    return base64.b64decode(img_b64)
+        print("Не найдено поля inlineData с base64 изображением.")
+        return None
     except Exception as e:
-        print(f"Ошибка API-генерации: {e}")
+        print(f"Ошибка Gemini генерации: {e}")
         return None
 
-
 def create_card(situation: str, answer: str, use_api: bool = True) -> Optional[Path]:
-    """
-    Создаёт карточку. Если use_api=True, запрашивает изображение у сервиса,
-    иначе генерирует встроенным методом.
-    """
     filename = f"{random.randint(0,999999)}.png"
     out_path = GENERATED_DIR / filename
 
     if use_api:
-        data = generate_image_via_api(f"{situation} Ответ: {answer}")
+        # Детализированный prompt для генерации карточки
+        prompt = (
+            "Сгенерируй python base64 image для карточки настольной русской игры, "
+            f"с заголовком 'Жесткая Игра', ситуацией: '{situation}', ответом: '{answer}'. "
+            "Стиль: цветная минималистичная карточка для настольной игры, смешно, современно."
+        )
+        data = generate_image_via_gemini(prompt)
         if data:
             out_path.write_bytes(data)
             return out_path
-        # fallback to Pillow
+        # fallback на Pillow
     return generate_image_file(situation, answer, out_path)
-
 
 if __name__ == "__main__":
     # Пример использования
