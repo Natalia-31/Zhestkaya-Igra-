@@ -6,8 +6,11 @@ import requests
 import base64
 import os
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or "твой_ключ"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent"
+# Вставь СВОЙ КЛЮЧ отсюда или получи через переменные окружения.
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or "ВАШ_КЛЮЧ_СЮДА"
+# Endpoint для картинок через Gemini API (image-preview)
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key={GEMINI_API_KEY}"
+
 BASE_DIR = Path(__file__).parent
 FONT_PATH = BASE_DIR / "arial.ttf"
 GENERATED_DIR = BASE_DIR / "generated_images"
@@ -63,8 +66,7 @@ def generate_image_via_gemini(situation: str, answer: str) -> Optional[bytes]:
         f"Ответ: '{answer}'. Стиль: русская настольная игра, минимализм, юмор, Russian language."
     )
     headers = {
-        "Content-Type": "application/json",
-        "x-goog-api-key": GEMINI_API_KEY,
+        "Content-Type": "application/json"
     }
     data = {
         "contents": [
@@ -79,7 +81,7 @@ def generate_image_via_gemini(situation: str, answer: str) -> Optional[bytes]:
         r = requests.post(GEMINI_URL, headers=headers, json=data)
         r.raise_for_status()
         response_json = r.json()
-        print("Gemini response:", repr(response_json))  # <-- ВЫВОДИТЬ ВСЕГДА!
+        print("Gemini response:", repr(response_json))  # Для отладки!
         parts = (
             response_json.get("candidates", [{}])[0]
             .get("content", {})
