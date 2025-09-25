@@ -1,7 +1,7 @@
 import requests
 import base64
 
-GEMINI_API_KEY = "AIzaSyB8Bnk0wR1aKA4tNSjhdtzGJZQ6gmlGGB8"
+GEMINI_API_KEY = "AIzaSyD25MoSKMDlfR8G9_IEvVza_L78VRkt0RM"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key={GEMINI_API_KEY}"
 
 def generate_card_image(situation, answer):
