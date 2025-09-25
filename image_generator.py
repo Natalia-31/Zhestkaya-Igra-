@@ -86,8 +86,8 @@ def generate_image_via_gemini(situation: str, answer: str) -> Optional[bytes]:
     Генерация картинки карточки через Google Gemini API.
     """
     prompt = (
-        f"Сгенерируй digital board game card картинку для ситуации: '{situation}'. "
-        f"Ответ: '{answer}'. Стиль: русская настольная игра, современно, минималистично, смешно, Russian language."
+        f"Сгенерируй digital board game card изображение для ситуации: '{situation}'. "
+        f"Ответ: '{answer}'. Стиль: русская настольная игра, минимализм, юмор, Russian language."
     )
     headers = {
         "Content-Type": "application/json",
@@ -106,7 +106,8 @@ def generate_image_via_gemini(situation: str, answer: str) -> Optional[bytes]:
         r = requests.post(GEMINI_URL, headers=headers, json=data)
         r.raise_for_status()
         response_json = r.json()
-        # print("Gemini response:", response_json) # для отладки
+        print("Gemini response:", response_json)  # ЛОГ ОТВЕТА!
+        # Парсер base64 — ищет в candidates → content → parts → inlineData(data)
         parts = (
             response_json.get("candidates", [{}])[0]
             .get("content", {})
