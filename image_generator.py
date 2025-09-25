@@ -5,6 +5,8 @@ from PIL import Image, ImageDraw, ImageFont
 import requests
 import base64
 import os
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
 
 # Пути
 BASE_DIR = Path(__file__).parent
@@ -25,7 +27,7 @@ EMOJIS = ["😂", "🔥", "🎭", "🍷", "👑", "💥", "🤯", "✨"]
 
 # ➡️ Gemini (Google) API настройки
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or "ВАШ_API_КЛЮЧ"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent"
 
 def wrap(text: str, width: int = 25) -> list[str]:
     words, lines, buf = text.split(), [], []
