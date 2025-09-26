@@ -14,17 +14,27 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-def generate_gemini_response(situation: str, answer: str) -> str:
-    model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
-    prompt = (
+def generate_meme_and_joke(situation: str, answer: str):
+    # 1. Сгенерировать подпись для мема/шутку
+    meme_prompt = (
         f"Ситуация: {situation}\n"
         f"Ответ игрока: {answer}\n"
-        "Придумай короткий смешной мем или шутку по этой ситуации и выбранному ответу. "
-        "Стиль — современный игровой юмор, формат — остроумная и лаконичная шутка (1-2 предложения), можно с интернет-сленгом. "
-        "Пиши только на русском, в молодежном стиле."
+        "Придумай короткую смешную подпись для мема или игровую шутку. Стиль – современный интернет-юмор для карточных и настольных игр, можно с самоиронией, сарказмом, молодежным сленгом. Текст только на русском. Не длиннее 2 строк!"
     )
-    response = model.generate_content(prompt)
-    return response.text
+    text_model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
+    joke_text = text_model.generate_content(meme_prompt).text
+
+    # 2. Сгенерировать картинку-мем (используем шутку как подсказку)
+    image_prompt = (
+        f"Игровая сцена: {situation}\n"
+        f"Карточка: {answer}\n"
+        f"Описание картинки-мема: {joke_text}. "
+        "Создай яркое, ироничное, абсурдное, комичное изображение в стилистике мемов, без надписей/текста на самой картинке. Не включай интерфейс Telegram или кнопки."
+    )
+    image_model = genai.GenerativeModel("imagen-4-ultra")  # или "gemini-2.5-flash-image", если доступна
+    image_response = image_model.generate_content([{"text": image_prompt}], generation_config={"response_mime_type": "image/png"})
+    image_url = image_response.generated_image_uri  # ссылка на картинку
+    return image_url, joke_text
 
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
@@ -208,8 +218,9 @@ async def on_pick(cb: CallbackQuery):
         pass
     await cb.message.edit_text(f"Победитель: {win_name}\nОтвет: {win_ans}")
 
-    ai_text = await asyncio.to_thread(generate_gemini_response, st["current_situation"], win_ans)
-    await cb.bot.send_message(group_chat_id, f"Мем/шутка:\n{ai_text}")
+    # Генерация мем-картинки и шутки:
+    image_url, joke = await asyncio.to_thread(generate_meme_and_joke, st["current_situation"], win_ans)
+    await cb.bot.send_photo(group_chat_id, image_url, caption=joke)
 
     try:
         await video_gen.send_video_illustration(cb.bot, group_chat_id,
