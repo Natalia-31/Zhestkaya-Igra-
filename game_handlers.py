@@ -1,4 +1,5 @@
 import asyncio
+import requests
 from typing import Dict, Any
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -10,32 +11,34 @@ from game_utils import decks, video_gen
 import google.generativeai as genai
 import os
 
+# Настройка Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
+# --- Генерация мема и шутки ---
 def generate_meme_and_joke(situation: str, answer: str):
-    # 1. Сгенерировать подпись для мема/шутку
+    # 1. Генерация шутки
     meme_prompt = (
         f"Ситуация: {situation}\n"
         f"Ответ игрока: {answer}\n"
-        "Придумай короткую смешную подпись для мема или игровую шутку. Стиль – современный интернет-юмор для карточных и настольных игр, можно с самоиронией, сарказмом, молодежным сленгом. Текст только на русском. Не длиннее 2 строк!"
+        "Придумай короткую смешную подпись для мема или игровую шутку. "
+        "Стиль – интернет-юмор, сарказм, самоирония. Только русский текст, не длиннее 2 строк."
     )
     text_model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
     joke_text = text_model.generate_content(meme_prompt).text
 
-    # 2. Сгенерировать картинку-мем (используем шутку как подсказку)
+    # 2. Картинка через Pollinations (возвращает прямую ссылку)
     image_prompt = (
-        f"Игровая сцена: {situation}\n"
-        f"Карточка: {answer}\n"
-        f"Описание картинки-мема: {joke_text}. "
-        "Создай яркое, ироничное, абсурдное, комичное изображение в стилистике мемов, без надписей/текста на самой картинке. Не включай интерфейс Telegram или кнопки."
+        f"Мем в стиле карточной игры. "
+        f"Ситуация: {situation}. Ответ: {answer}. "
+        f"Саркастичная суть: {joke_text}. "
+        "Без текста на самой картинке."
     )
-    image_model = genai.GenerativeModel("imagen-4-ultra")  # или "gemini-2.5-flash-image", если доступна
-    image_response = image_model.generate_content([{"text": image_prompt}], generation_config={"response_mime_type": "image/png"})
-    image_url = image_response.generated_image_uri  # ссылка на картинку
-    return image_url, joke_text
+    url = "https://image.pollinations.ai/prompt/" + requests.utils.quote(image_prompt)
+    return url, joke_text
 
+# --- Игровая логика ---
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
 
@@ -48,7 +51,7 @@ def main_menu() -> InlineKeyboardMarkup:
 
 @router.message(CommandStart())
 async def cmd_start(m: Message):
-    await m.answer("Жесткая Игра. Используйте меню.", reply_markup=main_menu())
+    await m.answer("Жесткая Игра 🎲\n\nИспользуйте меню:", reply_markup=main_menu())
 
 @router.message(Command("new_game"))
 async def cmd_new_game(m: Message):
@@ -82,6 +85,7 @@ async def ui_start_round(cb: CallbackQuery):
     await cb.answer()
     await _start_round(cb.bot, cb.message.chat.id)
 
+# --- Логика игры ---
 async def _create_game(chat_id: int, host_id: int, host_name: str):
     SESSIONS[chat_id] = {
         "players": [],
@@ -120,10 +124,7 @@ async def _start_round(bot: Bot, chat_id: int):
     host_id = host["user_id"]
 
     st["current_situation"] = decks.get_random_situation()
-    await bot.send_message(
-        chat_id,
-        f"Раунд! Ведущий: {host['username']}\n\nСитуация: {st['current_situation']}"
-    )
+    await bot.send_message(chat_id, f"Раунд! Ведущий: {host['username']}\n\nСитуация: {st['current_situation']}")
 
     full_deck = decks.get_new_shuffled_answers_deck()
     st["main_deck"] = [c for c in full_deck if c not in st["used_answers"]]
@@ -216,18 +217,19 @@ async def on_pick(cb: CallbackQuery):
         await cb.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
         pass
-    await cb.message.edit_text(f"Победитель: {win_name}\nОтвет: {win_ans}")
+    await cb.message.edit_text(f"🏆 Победитель: {win_name}\nОтвет: {win_ans}")
 
-    # Генерация мем-картинки и шутки:
+    # --- Генерация мема и шутки ---
     image_url, joke = await asyncio.to_thread(generate_meme_and_joke, st["current_situation"], win_ans)
     await cb.bot.send_photo(group_chat_id, image_url, caption=joke)
 
+    # --- Видео (опционально) ---
     try:
-        await video_gen.send_video_illustration(cb.bot, group_chat_id,
-                                                st["current_situation"], win_ans)
+        await video_gen.send_video_illustration(cb.bot, group_chat_id, st["current_situation"], win_ans)
     except Exception as e:
         await cb.bot.send_message(group_chat_id, f"Не удалось сгенерировать видео: {e}")
 
+    # --- Добор карт ---
     for p in st["players"]:
         uid2 = p["user_id"]
         if uid2 == host_id:
@@ -241,11 +243,7 @@ async def on_pick(cb: CallbackQuery):
             new_card = st["main_deck"].pop()
             st["hands"].setdefault(uid2, []).append(new_card)
             try:
-                await cb.bot.send_message(
-                    uid2,
-                    f"Вы добрали карту: {new_card}\nТеперь у вас {len(st['hands'][uid2])} карт.",
-                    parse_mode="Markdown"
-                )
+                await cb.bot.send_message(uid2, f"Вы добрали карту: {new_card}")
             except TelegramBadRequest:
                 pass
 
