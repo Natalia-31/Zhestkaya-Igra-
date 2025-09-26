@@ -11,35 +11,35 @@ print("answers loaded:", len(game_utils.decks.answers))
 
 import asyncio
 import logging
-
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 
 from handlers.game_handlers import router as game_router
 
-# Импорт функции генерации OpenAI картинки
-from image_generator import generate_image_openai
+import google.generativeai as genai # <-- ДОБАВЛЕНО
 
 logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # <-- ДОБАВЛЕНО
+
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+async def generate_gemini_response(text: str) -> str:
+    model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
+    response = model.generate_content(text)
+    return response.text
 
 async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY не задан в переменных окружения")
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=None))
     dp = Dispatcher(storage=MemoryStorage())
-
     dp.include_router(game_router)
-
-    # ======= ПРИМЕР: Генерация картинки через OpenAI (переносите этот вызов в ваши хэндлеры!) =======
-    # situation = "Игрок встречает мудрого старца"
-    # answer = "Получает секретный предмет"
-    # image_url = generate_image_openai(situation, answer)
-    # print("OpenAI image URL:", image_url)
-    # ================================================================================================
-
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
