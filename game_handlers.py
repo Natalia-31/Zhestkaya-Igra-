@@ -1,3 +1,4 @@
+import asyncio
 from typing import Dict, Any
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
