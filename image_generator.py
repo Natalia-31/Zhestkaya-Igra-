@@ -2,13 +2,14 @@ import requests
 import google.generativeai as genai
 
 # 1. Ключ Gemini (Google AI Studio)
-GEMINI_API_KEY = "AIzaSyB8Bnk0wR1aKA4tNSjhdtzGJZQ6gmlGGB8"  # <-- Вставьте свой API-ключ из Google AI Studio
+GEMINI_API_KEY = "AIzaSyB8Bnk0wR1aKA4tNSjhdtzGJZQ6gmlGGB8"  # <-- Убедись, что он не скомпрометирован!
 genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-pro")  # Для текстовой генерации (шутка)
 
-# 2. Генерация картинки через Pollinations (REST API, без регистрации/ключа)
+# Для текстовой генерации — актуальная быстрая модель Gemini 2.5 Flash Lite:
+gemini_model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
+
+# 2. Генерация картинки через Pollinations (REST API, бесплатно)
 def generate_pollinations_image(situation, answer):
-    # Промпт без текста, минимализм
     prompt = (
         f"Digital board game card illustration for situation: '{situation}'. "
         f"Answer: '{answer}'. Minimalism, Russian board game style, only image, no text."
@@ -17,18 +18,16 @@ def generate_pollinations_image(situation, answer):
     params = {"prompt": prompt}
     response = requests.get(url, params=params)
     if response.status_code == 200:
-        image_url = response.url  # Прямой URL на сгенерированную картинку
-        print("[Pollinations] Image URL:", image_url)
-        return image_url
+        return response.url
     else:
         print("Ошибка генерации картинки:", response.text)
         return None
 
-# 3. Генерация шутки (текст) через Gemini Pro
+# 3. Генерация шутки (текст) через Gemini Flash Lite
 def generate_card_joke(situation, answer):
     prompt = (
-        f"Придумай короткую смешную фразу/шутку для настольной игры по ситуации: '{situation}', "
-        f"и ответу игрока: '{answer}'. Язык: русский. Без мемов, только остроумно."
+        f"Придумай короткую яркую шутку для карточной настольной игры по ситуации: '{situation}', "
+        f"и ответу игрока: '{answer}'. Язык: русский. Формат — как мем, с иронией и игровым юмором. До 2 строк."
     )
     response = gemini_model.generate_content(prompt)
     print("[Gemini] Joke:", response.text)
@@ -49,5 +48,5 @@ if __name__ == "__main__":
     print("Ссылка на изображение:", image_url)
     print("Шутка для карточки:", joke)
 
-    # Пример: для aiogram-бота:
+    # Для бота:
     # await message.answer_photo(image_url, caption=joke)
