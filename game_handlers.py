@@ -1,3 +1,4 @@
+# handlers/game_handlers.py
 import asyncio
 from typing import Dict, Any
 from aiogram import Router, F, Bot
@@ -5,48 +6,35 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.filters import Command, CommandStart
 from aiogram.exceptions import TelegramBadRequest
 
-from game_utils import decks, video_gen
-from game_utils.generation import generate_card_content  # <-- новый импорт
+from game_utils import decks, generate_card_content
 
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
 
-
-# Главное меню
 def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎮 Начать игру", callback_data="ui_new_game")],
-        [InlineKeyboardButton(text="➕ Присоединиться", callback_data="ui_join_game")],
-        [InlineKeyboardButton(text="♻️ Новый раунд", callback_data="ui_start_round")],
+        [InlineKeyboardButton(text="Начать игру", callback_data="ui_new_game")],
+        [InlineKeyboardButton(text="Присоединиться", callback_data="ui_join_game")],
+        [InlineKeyboardButton(text="Новый раунд", callback_data="ui_start_round")],
     ])
 
-
-# Команда /start
 @router.message(CommandStart())
 async def cmd_start(m: Message):
-    await m.answer("👾 Жесткая Игра.\nВыбирай действие:", reply_markup=main_menu())
+    await m.answer("Жесткая Игра. Используйте меню.", reply_markup=main_menu())
 
-
-# Команда /new_game
 @router.message(Command("new_game"))
 async def cmd_new_game(m: Message):
     await _create_game(m.chat.id, m.from_user.id, m.from_user.full_name)
     await m.answer("Игра начата!", reply_markup=main_menu())
 
-
-# Команда /join_game
 @router.message(Command("join_game"))
 async def cmd_join_game(m: Message, bot: Bot):
     await _join_flow(m.chat.id, m.from_user.id, m.from_user.full_name, bot, feedback=m)
 
-
-# Команда /start_round
 @router.message(Command("start_round"))
 async def cmd_start_round(m: Message):
     await _start_round(m.bot, m.chat.id)
 
-
-# --- КНОПКИ ---
 @router.callback_query(F.data == "ui_new_game")
 async def ui_new_game(cb: CallbackQuery):
     await _create_game(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name)
@@ -56,20 +44,16 @@ async def ui_new_game(cb: CallbackQuery):
     except TelegramBadRequest:
         pass
 
-
 @router.callback_query(F.data == "ui_join_game")
 async def ui_join_game(cb: CallbackQuery, bot: Bot):
     await _join_flow(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name, bot, feedback=cb.message)
     await cb.answer()
-
 
 @router.callback_query(F.data == "ui_start_round")
 async def ui_start_round(cb: CallbackQuery):
     await cb.answer()
     await _start_round(cb.bot, cb.message.chat.id)
 
-
-# --- ВНУТРЕННИЕ ФУНКЦИИ ---
 async def _create_game(chat_id: int, host_id: int, host_name: str):
     SESSIONS[chat_id] = {
         "players": [],
@@ -81,28 +65,24 @@ async def _create_game(chat_id: int, host_id: int, host_name: str):
         "used_answers": []
     }
 
-
 async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedback: Message):
     st = SESSIONS.get(chat_id)
     if not st:
         await feedback.answer("Сначала нажмите «Начать игру».", reply_markup=main_menu())
         return
-
     if user_id not in [p["user_id"] for p in st["players"]]:
         try:
-            await bot.send_message(user_id, "Вы присоединились к игре! 🎉")
+            await bot.send_message(user_id, "Вы присоединились к игре! Ожидайте начала раунда.")
         except TelegramBadRequest as e:
             await feedback.answer(f"{user_name}, нажмите Start у бота и повторите. {e}")
             return
         st["players"].append({"user_id": user_id, "username": user_name})
-
     await feedback.answer(f"Игроков: {len(st['players'])}", reply_markup=main_menu())
-
 
 async def _start_round(bot: Bot, chat_id: int):
     st = SESSIONS.get(chat_id)
     if not st or len(st["players"]) < 2:
-        await bot.send_message(chat_id, "❗ Нужно минимум 2 игрока.", reply_markup=main_menu())
+        await bot.send_message(chat_id, "Нужно минимум 2 игрока.", reply_markup=main_menu())
         return
 
     st["answers"].clear()
@@ -114,13 +94,13 @@ async def _start_round(bot: Bot, chat_id: int):
     st["current_situation"] = decks.get_random_situation()
     await bot.send_message(
         chat_id,
-        f"🎲 Раунд!\nВедущий: {host['username']}\n\nСитуация: {st['current_situation']}"
+        f"Раунд! Ведущий: {host['username']}\n\nСитуация: {st['current_situation']}"
     )
 
     full_deck = decks.get_new_shuffled_answers_deck()
     st["main_deck"] = [c for c in full_deck if c not in st["used_answers"]]
     if not st["main_deck"]:
-        await bot.send_message(chat_id, "Нет доступных карт.", reply_markup=main_menu())
+        await bot.send_message(chat_id, "Нет доступных карт в колоде.", reply_markup=main_menu())
         return
 
     for p in st["players"]:
@@ -142,10 +122,10 @@ async def _start_round(bot: Bot, chat_id: int):
             for i, card in enumerate(hand)
         ])
         try:
-            await bot.send_message(uid, f"Ситуация: {st['current_situation']}\n\nВыберите ответ:", reply_markup=kb)
+            msg = f"Ситуация: {st['current_situation']}\n\nВаша рука ({len(hand)}). Выберите ответ:"
+            await bot.send_message(uid, msg, reply_markup=kb)
         except TelegramBadRequest:
             await bot.send_message(chat_id, f"Не могу написать игроку {p['username']}.")
-
 
 @router.callback_query(F.data.startswith("ans:"))
 async def on_answer(cb: CallbackQuery):
@@ -179,10 +159,8 @@ async def on_answer(cb: CallbackQuery):
             name = next(p["username"] for p in st["players"] if p["user_id"] == u2)
             lines.append(f"{i}. {name} — {ans}")
             buttons.append([InlineKeyboardButton(text=str(i), callback_data=f"pick:{group_chat_id}:{i-1}")])
-
         await cb.bot.send_message(group_chat_id, "Ответы игроков:\n" + "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-
 
 @router.callback_query(F.data.startswith("pick:"))
 async def on_pick(cb: CallbackQuery):
@@ -210,19 +188,13 @@ async def on_pick(cb: CallbackQuery):
         await cb.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
         pass
-    await cb.message.edit_text(f"🏆 Победитель: {win_name}\nОтвет: {win_ans}")
+    await cb.message.edit_text(f"Победитель: {win_name}\nОтвет: {win_ans}")
 
-    # 🎨 Генерация мем-картинки и шутки
-    image_url, joke = await asyncio.to_thread(generate_card_content, st["current_situation"], win_ans)
+    # генерация шутки + картинки
+    image_url, joke = await generate_card_content(st["current_situation"], win_ans)
     if image_url:
-        await cb.bot.send_photo(group_chat_id, image_url, caption=joke)
+        await cb.bot.send_photo(group_chat_id, image_url, caption=joke or " ")
     else:
-        await cb.bot.send_message(group_chat_id, f"Шутка: {joke}")
+        await cb.bot.send_message(group_chat_id, f"Шутка: {joke or '—'}")
 
-    # 🎥 Видео (опционально)
-    try:
-        await video_gen.send_video_illustration(cb.bot, group_chat_id, st["current_situation"], win_ans)
-    except Exception as e:
-        await cb.bot.send_message(group_chat_id, f"Не удалось сгенерировать видео: {e}")
-
-    await cb.bot.send_message(group_chat_id, "♻️ Раунд завершён.", reply_markup=main_menu())
+    await cb.bot.send_message(group_chat_id, "Раунд завершён.", reply_markup=main_menu())
