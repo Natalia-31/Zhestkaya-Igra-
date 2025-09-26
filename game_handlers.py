@@ -7,7 +7,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 from game_utils import decks, video_gen
 
-# ----------- ДОБАВЛЕНО ДЛЯ GEMINI ----------
+# ----------- ДЛЯ GEMINI ----------
 import google.generativeai as genai
 import os
 
@@ -21,15 +21,14 @@ def generate_gemini_response(situation: str, answer: str) -> str:
     response = model.generate_content(prompt)
     return response.text
 
-# ----------- ВАША ОСНОВНАЯ ИГРОВАЯ ЛОГИКА ----------
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
 
 def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ Начать игру", callback_data="ui_new_game")],
-        [InlineKeyboardButton(text="➕ Присоединиться", callback_data="ui_join_game")],
-        [InlineKeyboardButton(text="🎲 Новый раунд", callback_data="ui_start_round")],
+        [InlineKeyboardButton(text="Начать игру", callback_data="ui_new_game")],
+        [InlineKeyboardButton(text="Присоединиться", callback_data="ui_join_game")],
+        [InlineKeyboardButton(text="Новый раунд", callback_data="ui_start_round")],
     ])
 
 @router.message(CommandStart())
@@ -39,7 +38,7 @@ async def cmd_start(m: Message):
 @router.message(Command("new_game"))
 async def cmd_new_game(m: Message):
     await _create_game(m.chat.id, m.from_user.id, m.from_user.full_name)
-    await m.answer("✅ Игра начата!", reply_markup=main_menu())
+    await m.answer("Игра начата!", reply_markup=main_menu())
 
 @router.message(Command("join_game"))
 async def cmd_join_game(m: Message, bot: Bot):
@@ -54,7 +53,7 @@ async def ui_new_game(cb: CallbackQuery):
     await _create_game(cb.message.chat.id, cb.from_user.id, cb.from_user.full_name)
     await cb.answer()
     try:
-        await cb.message.edit_text("✅ Игра начата!", reply_markup=main_menu())
+        await cb.message.edit_text("Игра начата!", reply_markup=main_menu())
     except TelegramBadRequest:
         pass
 
@@ -88,10 +87,10 @@ async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedb
         try:
             await bot.send_message(user_id, "Вы присоединились к игре! Ожидайте начала раунда.")
         except TelegramBadRequest as e:
-            await feedback.answer(f"⚠️ {user_name}, нажмите Start у бота и повторите. {e}")
+            await feedback.answer(f"{user_name}, нажмите Start у бота и повторите. {e}")
             return
         st["players"].append({"user_id": user_id, "username": user_name})
-    await feedback.answer(f"✅ Игроков: {len(st['players'])}", reply_markup=main_menu())
+    await feedback.answer(f"Игроков: {len(st['players'])}", reply_markup=main_menu())
 
 async def _start_round(bot: Bot, chat_id: int):
     st = SESSIONS.get(chat_id)
@@ -108,13 +107,13 @@ async def _start_round(bot: Bot, chat_id: int):
     st["current_situation"] = decks.get_random_situation()
     await bot.send_message(
         chat_id,
-        f"🎬 Раунд! 👑 Ведущий: {host['username']}\n\n🎲 {st['current_situation']}"
+        f"Раунд! Ведущий: {host['username']}\n\nСитуация: {st['current_situation']}"
     )
 
     full_deck = decks.get_new_shuffled_answers_deck()
     st["main_deck"] = [c for c in full_deck if c not in st["used_answers"]]
     if not st["main_deck"]:
-        await bot.send_message(chat_id, "⚠️ Нет доступных карт в колоде.")
+        await bot.send_message(chat_id, "Нет доступных карт в колоде.", reply_markup=main_menu())
         return
 
     for p in st["players"]:
@@ -136,10 +135,10 @@ async def _start_round(bot: Bot, chat_id: int):
             for i, card in enumerate(hand)
         ])
         try:
-            msg = f"🎲 Ситуация: {st['current_situation']}\n\n🎴 Ваша рука ({len(hand)}). Выберите ответ:"
+            msg = f"Ситуация: {st['current_situation']}\n\nВаша рука ({len(hand)}). Выберите ответ:"
             await bot.send_message(uid, msg, reply_markup=kb)
         except TelegramBadRequest:
-            await bot.send_message(chat_id, f"⚠️ Не могу написать игроку {p['username']}.")
+            await bot.send_message(chat_id, f"Не могу написать игроку {p['username']}.")
 
 @router.callback_query(F.data.startswith("ans:"))
 async def on_answer(cb: CallbackQuery):
@@ -202,17 +201,16 @@ async def on_pick(cb: CallbackQuery):
         await cb.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
         pass
-    await cb.message.edit_text(f"🏆 Победитель: {win_name}\nОтвет: {win_ans}")
+    await cb.message.edit_text(f"Победитель: {win_name}\nОтвет: {win_ans}")
 
-    # -------- ВСТАВЛЕНО: AI-реакция от Gemini --------
     ai_text = await asyncio.to_thread(generate_gemini_response, st["current_situation"], win_ans)
-    await cb.bot.send_message(group_chat_id, f"🤖 AI-реакция:\n{ai_text}")
+    await cb.bot.send_message(group_chat_id, f"AI-реакция:\n{ai_text}")
 
     try:
         await video_gen.send_video_illustration(cb.bot, group_chat_id,
                                                 st["current_situation"], win_ans)
     except Exception as e:
-        await cb.bot.send_message(group_chat_id, f"⚠️ Не удалось сгенерировать видео: {e}")
+        await cb.bot.send_message(group_chat_id, f"Не удалось сгенерировать видео: {e}")
 
     for p in st["players"]:
         uid2 = p["user_id"]
@@ -229,7 +227,7 @@ async def on_pick(cb: CallbackQuery):
             try:
                 await cb.bot.send_message(
                     uid2,
-                    f"🎴 Вы добрали карту: **{new_card}**\nТеперь у вас {len(st['hands'][uid2])} карт.",
+                    f"Вы добрали карту: {new_card}\nТеперь у вас {len(st['hands'][uid2])} карт.",
                     parse_mode="Markdown"
                 )
             except TelegramBadRequest:
