@@ -7,7 +7,6 @@ from aiogram.exceptions import TelegramBadRequest
 
 from game_utils import decks, video_gen
 
-# ----------- ДЛЯ GEMINI ----------
 import google.generativeai as genai
 import os
 
@@ -17,7 +16,13 @@ if GEMINI_API_KEY:
 
 def generate_gemini_response(situation: str, answer: str) -> str:
     model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
-    prompt = f"Ситуация: {situation}\nОтвет игрока: {answer}\nОписание или реакция:"
+    prompt = (
+        f"Ситуация: {situation}\n"
+        f"Ответ игрока: {answer}\n"
+        "Придумай короткий смешной мем или шутку по этой ситуации и выбранному ответу. "
+        "Стиль — современный игровой юмор, формат — остроумная и лаконичная шутка (1-2 предложения), можно с интернет-сленгом. "
+        "Пиши только на русском, в молодежном стиле."
+    )
     response = model.generate_content(prompt)
     return response.text
 
@@ -204,7 +209,7 @@ async def on_pick(cb: CallbackQuery):
     await cb.message.edit_text(f"Победитель: {win_name}\nОтвет: {win_ans}")
 
     ai_text = await asyncio.to_thread(generate_gemini_response, st["current_situation"], win_ans)
-    await cb.bot.send_message(group_chat_id, f"AI-реакция:\n{ai_text}")
+    await cb.bot.send_message(group_chat_id, f"Мем/шутка:\n{ai_text}")
 
     try:
         await video_gen.send_video_illustration(cb.bot, group_chat_id,
