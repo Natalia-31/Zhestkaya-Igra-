@@ -1,4 +1,4 @@
-# game_utils.py
+# game_utils.py — обновлённая версия
 import os
 import json
 import random
@@ -13,12 +13,16 @@ from dotenv import load_dotenv
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 
+import google.generativeai as genai
+
 # ====== Загрузка ключей ======
 load_dotenv()
-NANO_API_KEY   = os.getenv("NANO_API_KEY")
-HORDE_API_KEY  = os.getenv("HORDE_API_KEY")
-POLLO_API_KEY  = os.getenv("POLLO_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    gemini_model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
+else:
+    gemini_model = None
 
 # ====== Менеджер колод ======
 class DeckManager:
@@ -26,10 +30,10 @@ class DeckManager:
         self.base_dir = base or Path(__file__).resolve().parent
         self.sit_path = (self.base_dir / situations_file).resolve()
         self.ans_path = (self.base_dir / answers_file).resolve()
-        self.situations: List[str] = self._load_list(self.sit_path)
-        self.answers: List[str]    = self._load_list(self.ans_path)
+        self.situations: List[str] = self._load_list(self.sit_path, "situations")
+        self.answers: List[str]    = self._load_list(self.ans_path, "answers")
 
-    def _load_list(self, file_path: Path) -> List[str]:
+    def _load_list(self, file_path: Path, label: str) -> List[str]:
         for enc in ("utf-8-sig", "utf-8"):
             try:
                 data = json.loads(file_path.read_text(encoding=enc))
@@ -54,49 +58,56 @@ class DeckManager:
         random.shuffle(deck)
         return deck
 
-# ====== Генерация изображения через Pollinations ======
-async def generate_pollinations_image(scene_description: str) -> Optional[str]:
-    url = f"https://image.pollinations.ai/prompt/{quote(scene_description)}?width=768&height=432"
-    async with aiohttp.ClientSession() as s:
-        async with s.get(url, timeout=20) as r:
-            if r.status == 200:
-                return str(r.url)
-    return None
-
-# ====== Gemini (шутка + описание сцены) ======
-import google.generativeai as genai
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
-else:
-    gemini_model = None
-
-async def generate_card_content(situation: str, answer: str):
+# ====== Генерация описания сцены ======
+async def generate_scene_prompt(situation: str, answer: str) -> str:
     if not gemini_model:
-        return None, "⚠️ GEMINI_API_KEY не найден"
+        return f"Cartoon of '{situation}' with answer '{answer}'"
 
-    # 1. описание сцены
-    scene_prompt = (
+    prompt = (
         f"Ситуация: {situation}\n"
         f"Ответ игрока: {answer}\n"
-        "Сделай короткое (1–2 предложения) описание визуальной сцены для картинки."
-        "Стиль: абсурдный, ироничный, как для настольной карточной игры. Без текста на самой картинке."
+        "Составь конкретное визуальное описание сцены. "
+        "Укажи минимум два объекта (например: человек, животное, предмет). "
+        "Добавь действие или реакцию. "
+        "Не используй слова 'сцена', 'кадр', 'иллюстрация'. "
+        "Стиль: мем, карикатура, comic panel, colorful, exaggerated expressions."
     )
-    scene_desc = (await asyncio.to_thread(gemini_model.generate_content, scene_prompt)).text.strip()
+    response = await asyncio.to_thread(gemini_model.generate_content, prompt)
+    return response.text.strip()
 
-    # 2. картинка
-    image_url = await generate_pollinations_image(scene_desc)
+# ====== Генерация картинки через Pollinations ======
+async def generate_pollinations_image(scene_description: str) -> Optional[str]:
+    url = "https://api.pollinations.ai/prompt"
+    params = {"prompt": scene_description}
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, params=params, timeout=20) as r:
+                if r.status == 200:
+                    return str(r.url)
+    except Exception:
+        pass
+    return None
 
-    # 3. шутка
-    joke_prompt = (
-        f"Придумай смешную подпись для карточной игры.\n"
+# ====== Генерация шутки ======
+async def generate_card_joke(situation: str, answer: str) -> str:
+    if not gemini_model:
+        return f"Ситуация: {situation} | Ответ: {answer}"
+
+    prompt = (
+        f"Придумай короткую смешную подпись.\n"
         f"Ситуация: {situation}\n"
         f"Ответ игрока: {answer}\n"
         "Формат: мем, максимум 2 строки, на русском."
     )
-    joke = (await asyncio.to_thread(gemini_model.generate_content, joke_prompt)).text.strip()
+    response = await asyncio.to_thread(gemini_model.generate_content, prompt)
+    return response.text.strip()
 
-    return image_url, joke
+# ====== Основная функция ======
+async def generate_card_content(situation: str, answer: str):
+    scene_description = await generate_scene_prompt(situation, answer)
+    image_url = await generate_pollinations_image(scene_description)
+    joke_text = await generate_card_joke(situation, answer)
+    return image_url, joke_text
 
 # ====== Экземпляры ======
 decks = DeckManager(base=Path(__file__).resolve().parent)
