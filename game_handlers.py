@@ -15,7 +15,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-async def generate_gemini_response(situation: str, answer: str) -> str:
+def generate_gemini_response(situation: str, answer: str) -> str:
     model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
     prompt = f"Ситуация: {situation}\nОтвет игрока: {answer}\nОписание или реакция:"
     response = model.generate_content(prompt)
