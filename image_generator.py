@@ -2,7 +2,7 @@ import requests
 import google.generativeai as genai
 
 # 1. Ключ Gemini (Google AI Studio)
-GEMINI_API_KEY = "ВАШ_КЛЮЧ"  # ⚠️ Вынеси в .env для безопасности!
+GEMINI_API_KEY = "AIzaSyB8Bnk0wR1aKA4tNSjhdtzGJZQ6gmlGGB8"  # ⚠️ Вынеси в .env для безопасности!
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Для текстовой генерации (шутки)
