@@ -4,7 +4,7 @@ import random
 HAND_SIZE = 10
 
 # Словарь хранения игровых сессий: chat_id → GameSession
-game_states: dict[int, GameSession] = {}
+game_states: dict[int, 'GameSession'] = {}
 
 class GameSession:
     def __init__(self, chat_id):
