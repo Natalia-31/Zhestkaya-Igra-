@@ -16,6 +16,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 
 from handlers.game_handlers import router as game_router
+from game_state import game_states, GameSession, HAND_SIZE
+
 
 import google.generativeai as genai # <-- ДОБАВЛЕНО
 
