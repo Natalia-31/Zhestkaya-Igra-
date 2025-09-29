@@ -1,8 +1,9 @@
 import requests
 import google.generativeai as genai
+import urllib.parse
 
 # 1. Ключ Gemini (Google AI Studio)
-GEMINI_API_KEY = "AIzaSyB8Bnk0wR1aKA4tNSjhdtzGJZQ6gmlGGB8"  # ⚠️ Вынеси в .env для безопасности!
+GEMINI_API_KEY = "ВАШ_КЛЮЧ"  # ⚠️ Вынеси в .env для безопасности!
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Модель Gemini для текста
@@ -13,18 +14,30 @@ gemini_model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
 def refine_visual_prompt(situation, answer):
     prompt = (
         f"Ситуация: {situation}. Ответ игрока: {answer}. "
-        f"Составь короткое описание сцены на английском языке для генерации изображения. "
-        f"Фокус: персонаж, действие, атмосфера. Стиль: мультяшный, минимализм, настольная игра. "
-        f"Выведи только описание сцены, без лишнего текста."
+        f"Составь короткое описание сцены на английском языке для генерации картинки. "
+        f"Фокус: персонаж, действие, атмосфера. Стиль: cartoon, board game art, minimalism. "
+        f"Выведи только описание сцены, максимум 15 слов."
     )
     response = gemini_model.generate_content(prompt)
-    return response.text.strip() if response and response.text else f"{situation}, {answer}"
+    text = response.text.strip() if response and response.text else ""
+
+    # fallback, если Gemini вернул что-то пустое или слишком длинное
+    if not text or len(text) > 200:
+        text = f"Funny cartoon illustration, {situation}, {answer}, board game style"
+
+    return text
 
 
 # 3. Генерация картинки через Pollinations (REST API)
 def generate_pollinations_image(situation, answer):
     visual_prompt = refine_visual_prompt(situation, answer)
-    url = f"https://image.pollinations.ai/prompt/{visual_prompt.replace(' ', '%20')}"
+    print("[Visual prompt]:", visual_prompt)  # для отладки
+
+    # Кодируем промпт для URL
+    encoded_prompt = urllib.parse.quote(visual_prompt)
+
+    # Pollinations endpoint
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}"
     return url
 
 
@@ -36,7 +49,7 @@ def generate_card_joke(situation, answer):
     )
     response = gemini_model.generate_content(prompt)
     joke = response.text.strip() if response and response.text else "¯\\_(ツ)_/¯"
-    print("[Gemini] Joke:", joke)
+    print("[Gemini joke]:", joke)
     return joke
 
 
