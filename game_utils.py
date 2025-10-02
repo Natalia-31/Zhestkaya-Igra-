@@ -4,21 +4,17 @@ import random
 from pathlib import Path
 from typing import List, Optional
 import asyncio
+import aiohttp
 from dotenv import load_dotenv
-
-from perplexity import Perplexity
 import google.generativeai as genai
 
-# ====== Загрузка ключей из .env ======
+# ====== Загрузка ключей ======
 load_dotenv()
-PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")  # твой ключ Perplexity
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")          # твой ключ Gemini
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
-
-perplexity_client = Perplexity(api_key=PERPLEXITY_API_KEY)
 gemini_model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
 
-# ====== Менеджер колод ======
+# Менеджер колод
 class DeckManager:
     def __init__(self, situations_file: str = "situations.json", answers_file: str = "answers.json", base: Path | None = None):
         self.base_dir = base or Path(__file__).resolve().parent
@@ -37,7 +33,8 @@ class DeckManager:
                         if isinstance(x, str):
                             x = x.strip()
                             if x and x not in seen:
-                                seen.add(x); out.append(x)
+                                seen.add(x)
+                                out.append(x)
                     return out
                 return []
             except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
@@ -52,32 +49,28 @@ class DeckManager:
         random.shuffle(deck)
         return deck
 
-# ====== Генерация карточки изображения через Perplexity ======
-async def generate_perplexity_card_image(situation: str) -> Optional[str]:
+# Генерация картинки через Pollinations на основе ситуации и ответа
+async def generate_pollinations_image(situation: str, answer: str) -> Optional[str]:
     prompt = (
-        f"Create a stylish Telegram game card for the game 'Жесткая игра'. "
-        f"Show the situation text prominently in a bold, readable font: \"{situation}\". "
-        f"Use bright colors and modern design with the game logo in the corner. "
-        f"The card should look fun, attractive, and clear."
+        f"Cartoon style card for a Russian Telegram game 'Жесткая игра': Situation: {situation}, "
+        f"Player's answer: {answer}. Minimalism, humor, bold lines, no text overlay on the image itself."
     )
+    url = "https://api.pollinations.ai/prompt"
+    params = {"prompt": prompt}
     try:
-        response = await perplexity_client.chat.completions.create(
-            model="gpt-image-1",
-            messages=[{"role": "user", "content": prompt}],
-        )
-        for choice in response.choices:
-            content = choice.message.content
-            if isinstance(content, dict) and "image_url" in content:
-                return content["image_url"]["url"]
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=20) as resp:
+                if resp.status == 200:
+                    # Pollinations возвращает редирект на сгенерированное изображение
+                    return str(resp.url)
     except Exception as e:
-        print(f"Error generating Perplexity card image: {e}")
+        print(f"Ошибка генерации изображения Pollinations: {e}")
     return None
 
-# ====== Генерация шутки через Gemini ======
+# Генерация шутки через Gemini API
 async def generate_card_joke(situation: str, answer: str) -> str:
     if not gemini_model:
         return f"Ситуация: {situation} | Ответ: {answer}"
-
     prompt = (
         f"Придумай короткую смешную подпись.\n"
         f"Ситуация: {situation}\n"
@@ -91,11 +84,11 @@ async def generate_card_joke(situation: str, answer: str) -> str:
         print(f"Ошибка Gemini: {e}")
         return "Не удалось сгенерировать шутку."
 
-# ====== Основная генерация карточного контента ======
+# Основная функция генерации карточного контента
 async def generate_card_content(situation: str, answer: str):
-    image_url = await generate_perplexity_card_image(situation)
+    image_url = await generate_pollinations_image(situation, answer)
     joke_text = await generate_card_joke(situation, answer)
     return image_url, joke_text
 
-# ====== Инициализация менеджера колод ======
+# Инициализация менеджера колод
 decks = DeckManager(base=Path(__file__).resolve().parent)
