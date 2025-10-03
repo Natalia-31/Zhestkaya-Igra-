@@ -69,7 +69,7 @@ async def _create_game(chat_id: int, host_id: int, host_name: str):
         "players": [],
         "hands": {},
         "answers": {},
-        "scores": {},  # Добавлено: хранение очков
+        "scores": {},
         "host_idx": -1,
         "current_situation": None,
         "main_deck": [],
@@ -88,7 +88,7 @@ async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedb
             await feedback.answer(f"{user_name}, нажмите Start у бота и повторите. {e}")
             return
         st["players"].append({"user_id": user_id, "username": user_name})
-        st["scores"][user_id] = 0  # Инициализация очков
+        st["scores"][user_id] = 0
     await feedback.answer(f"Игроков: {len(st['players'])}", reply_markup=main_menu())
 
 async def _show_stats(chat_id: int, feedback: Message):
@@ -97,7 +97,6 @@ async def _show_stats(chat_id: int, feedback: Message):
         await feedback.answer("Игра не найдена или нет игроков.", reply_markup=main_menu())
         return
     
-    # Сортировка игроков по очкам
     sorted_players = sorted(
         st["players"], 
         key=lambda p: st["scores"].get(p["user_id"], 0), 
@@ -107,7 +106,7 @@ async def _show_stats(chat_id: int, feedback: Message):
     lines = ["📊 **Статистика игры:**\n"]
     for i, p in enumerate(sorted_players, 1):
         score = st["scores"].get(p["user_id"], 0)
-        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ▪️"
+        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "▪️"
         lines.append(f"{medal} {i}. {p['username']} — {score} очков")
     
     await feedback.answer("\n".join(lines), reply_markup=main_menu())
@@ -138,14 +137,20 @@ async def _start_round(bot: Bot, chat_id: int):
         st["used_answers"].clear()
         st["main_deck"] = decks.get_new_shuffled_answers_deck()
 
-    # Раздача карт всем игрокам кроме ведущего
+    # ИСПРАВЛЕНО: Добираем карты только до 10, не перезаписываем руку
     for p in st["players"]:
         uid = p["user_id"]
         if uid == host_id:
             continue
+        
+        # Берём текущую руку игрока (если её нет — создаём пустую)
         current_hand = st["hands"].get(uid, [])
+        
+        # Добираем карты до 10
         while len(current_hand) < 10 and st["main_deck"]:
             current_hand.append(st["main_deck"].pop())
+        
+        # Обновляем руку
         st["hands"][uid] = current_hand
 
     # Отправка ситуации и карт в личку игрокам
@@ -178,7 +183,6 @@ async def on_answer(cb: CallbackQuery):
         await cb.answer("Вы не можете отвечать.", show_alert=True)
         return
 
-    # Проверка, что игрок еще не ответил
     if uid in st["answers"]:
         await cb.answer("Вы уже выбрали ответ!", show_alert=True)
         return
@@ -189,7 +193,7 @@ async def on_answer(cb: CallbackQuery):
         return
 
     card = hand[idx]
-    st["answers"][uid] = {"card": card, "index": idx}  # Сохраняем карту и индекс
+    st["answers"][uid] = {"card": card, "index": idx}
     await cb.answer(f"✅ Вы выбрали: {card}")
 
     need = len(st["players"]) - 1
@@ -232,22 +236,19 @@ async def on_pick(cb: CallbackQuery):
     # Начисление очка победителю
     st["scores"][win_uid] = st["scores"].get(win_uid, 0) + 1
 
-    # Замена карт у ВСЕХ игроков, которые играли
+    # ИСПРАВЛЕНО: Удаление использованной карты и добавление в used_answers
     for uid, answer_data in st["answers"].items():
         hand = st["hands"].get(uid, [])
         card = answer_data["card"]
         
-        # Удаляем использованную карту
+        # Удаляем использованную карту из руки
         if card in hand:
             hand.remove(card)
         
         # Добавляем карту в использованные
         st["used_answers"].append(card)
         
-        # Добираем новую карту
-        if st["main_deck"]:
-            hand.append(st["main_deck"].pop())
-        
+        # Обновляем руку (НЕ добираем здесь - это будет в следующем _start_round)
         st["hands"][uid] = hand
 
     try:
