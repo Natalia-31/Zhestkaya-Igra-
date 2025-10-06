@@ -125,7 +125,7 @@ async def _start_round(bot: Bot, chat_id: int):
 
     st["current_situation"] = decks.get_random_situation()
     
-    # ИЗМЕНЕНО: Отправляем карточку вместо текста
+    # Отправляем карточку вместо текста
     try:
         card_image = create_situation_card(st["current_situation"])
         photo = BufferedInputFile(card_image.read(), filename='situation.png')
@@ -141,30 +141,54 @@ async def _start_round(bot: Bot, chat_id: int):
             f"🎮 **Новый раунд!**\nВедущий: {host['username']}\n\n📝 Ситуация:\n{st['current_situation']}"
         )
 
-    # Подготовка колоды без использованных карт
-    full_deck = decks.get_new_shuffled_answers_deck()
-    st["main_deck"] = [c for c in full_deck if c not in st["used_answers"]]
+    # УЛУЧШЕНО: Собираем все карты, которые уже где-то используются
+    cards_in_use = set(st["used_answers"])  # Использованные карты
+    for uid, hand in st["hands"].items():
+        cards_in_use.update(hand)  # Карты в руках игроков
     
-    # Если карты закончились, сбрасываем used_answers
-    if len(st["main_deck"]) < (len(st["players"]) - 1) * 10:
+    # Создаем колоду без карт, которые уже в игре
+    full_deck = decks.get_new_shuffled_answers_deck()
+    st["main_deck"] = [c for c in full_deck if c not in cards_in_use]
+    
+    # Подсчитываем сколько карт нужно
+    non_host_players = [p for p in st["players"] if p["user_id"] != host_id]
+    if non_host_players:
+        min_hand_size = min(len(st["hands"].get(p["user_id"], [])) for p in non_host_players)
+        cards_needed = len(non_host_players) * (10 - min_hand_size)
+    else:
+        cards_needed = 0
+    
+    # Если доступных карт мало, сбрасываем used_answers
+    if len(st["main_deck"]) < cards_needed:
+        print(f"⚠️ Карты закончились! Сброс used_answers. Было использовано: {len(st['used_answers'])}")
         st["used_answers"].clear()
-        st["main_deck"] = decks.get_new_shuffled_answers_deck()
+        
+        # Пересоздаем колоду, исключая только карты в руках
+        cards_in_hands = set()
+        for uid, hand in st["hands"].items():
+            cards_in_hands.update(hand)
+        
+        full_deck = decks.get_new_shuffled_answers_deck()
+        st["main_deck"] = [c for c in full_deck if c not in cards_in_hands]
 
-    # Добираем карты только до 10, не перезаписываем руку
+    # Добираем карты до 10 каждому игроку (кроме ведущего)
     for p in st["players"]:
         uid = p["user_id"]
         if uid == host_id:
             continue
         
-        # Берём текущую руку игрока (если её нет — создаём пустую)
+        # Берём текущую руку игрока
         current_hand = st["hands"].get(uid, [])
         
         # Добираем карты до 10
         while len(current_hand) < 10 and st["main_deck"]:
-            current_hand.append(st["main_deck"].pop())
+            new_card = st["main_deck"].pop()
+            # ПРОВЕРКА: убеждаемся что карты нет в руке
+            if new_card not in current_hand:
+                current_hand.append(new_card)
         
-        # Обновляем руку
         st["hands"][uid] = current_hand
+        print(f"✅ Игрок {p['username']}: {len(current_hand)} карт в руке")
 
     # Отправка ситуации и карт в личку игрокам
     for p in st["players"]:
