@@ -51,19 +51,20 @@ def create_situation_card(situation_text: str, template_path: str = 'assets/card
     
     draw = ImageDraw.Draw(card)
     
-    # Загружаем шрифт с поддержкой кириллицы
+    # Загружаем шрифт Stalinist One с поддержкой кириллицы
     font_paths = [
-        'assets/fonts/RussoOne-Regular.ttf',  # Russo One (приоритет)
+        'assets/fonts/StalinistOne-Regular.ttf',  # Stalinist One (приоритет)
+        'assets/fonts/RussoOne-Regular.ttf',  # Резервный
         'assets/fonts/DejaVuSans.ttf',  # Резервный
         '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',  # Linux
-        'C:\\Windows\\Fonts\\arial.ttf',  # Windows (правильные слэши)
+        'C:\\Windows\\Fonts\\arial.ttf',  # Windows (исправлены слэши)
         '/System/Library/Fonts/Helvetica.ttc',  # macOS
     ]
     
     font = None
     for font_path in font_paths:
         try:
-            font = ImageFont.truetype(font_path, 36)  # Размер 36
+            font = ImageFont.truetype(font_path, 38)  # Размер 38 для Stalinist One
             print(f"✅ Шрифт загружен: {font_path}")
             break
         except Exception as e:
@@ -75,7 +76,7 @@ def create_situation_card(situation_text: str, template_path: str = 'assets/card
     
     # Параметры карточки
     card_width, card_height = card.size
-    max_width = card_width - 140  # Отступы по краям (увеличено для крупного шрифта)
+    max_width = card_width - 150  # Отступы по краям (увеличено для крупного шрифта)
     
     # Разбиваем текст на строки
     words = situation_text.split()
@@ -99,14 +100,14 @@ def create_situation_card(situation_text: str, template_path: str = 'assets/card
         lines.append(current_line.strip())
     
     # Ограничиваем количество строк
-    max_lines = 10
+    max_lines = 9
     if len(lines) > max_lines:
         lines = lines[:max_lines]
-        if len(lines[-1]) > 60:
-            lines[-1] = lines[-1][:60] + "..."
+        if len(lines[-1]) > 50:
+            lines[-1] = lines[-1][:50] + "..."
     
     # Центрируем текст по вертикали
-    line_height = 48  # Увеличенный интервал для лучшей читаемости
+    line_height = 52  # Увеличенный интервал для лучшей читаемости
     total_height = len(lines) * line_height
     y_start = (card_height - total_height) // 2
     
