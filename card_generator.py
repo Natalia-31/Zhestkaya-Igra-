@@ -53,18 +53,20 @@ def create_situation_card(situation_text: str, template_path: str = 'assets/card
     
     # Загружаем шрифт с поддержкой кириллицы
     font_paths = [
-        'assets/fonts/DejaVuSans.ttf',  # Основной путь
+        'assets/fonts/RussoOne-Regular.ttf',  # Russo One (приоритет)
+        'assets/fonts/DejaVuSans.ttf',  # Резервный
         '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',  # Linux
-        'C:\\Windows\\Fonts\\arial.ttf',  # Windows
+        'C:\\Windows\\Fonts\\arial.ttf',  # Windows (правильные слэши)
         '/System/Library/Fonts/Helvetica.ttc',  # macOS
     ]
     
     font = None
     for font_path in font_paths:
         try:
-            font = ImageFont.truetype(font_path, 38)
+            font = ImageFont.truetype(font_path, 36)  # Размер 36
+            print(f"✅ Шрифт загружен: {font_path}")
             break
-        except:
+        except Exception as e:
             continue
     
     if font is None:
@@ -73,7 +75,7 @@ def create_situation_card(situation_text: str, template_path: str = 'assets/card
     
     # Параметры карточки
     card_width, card_height = card.size
-    max_width = card_width - 120  # Отступы по краям
+    max_width = card_width - 140  # Отступы по краям (увеличено для крупного шрифта)
     
     # Разбиваем текст на строки
     words = situation_text.split()
@@ -96,8 +98,15 @@ def create_situation_card(situation_text: str, template_path: str = 'assets/card
     if current_line:
         lines.append(current_line.strip())
     
+    # Ограничиваем количество строк
+    max_lines = 10
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        if len(lines[-1]) > 60:
+            lines[-1] = lines[-1][:60] + "..."
+    
     # Центрируем текст по вертикали
-    line_height = 50
+    line_height = 48  # Увеличенный интервал для лучшей читаемости
     total_height = len(lines) * line_height
     y_start = (card_height - total_height) // 2
     
