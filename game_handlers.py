@@ -2,11 +2,12 @@
 import asyncio
 from typing import Dict, Any
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from aiogram.filters import Command, CommandStart
 from aiogram.exceptions import TelegramBadRequest
 
 from game_utils import decks, generate_card_content
+from card_generator import create_situation_card
 
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
@@ -123,10 +124,22 @@ async def _start_round(bot: Bot, chat_id: int):
     host_id = host["user_id"]
 
     st["current_situation"] = decks.get_random_situation()
-    await bot.send_message(
-        chat_id,
-        f"🎮 **Новый раунд!**\nВедущий: {host['username']}\n\n📝 Ситуация:\n{st['current_situation']}"
-    )
+    
+    # ИЗМЕНЕНО: Отправляем карточку вместо текста
+    try:
+        card_image = create_situation_card(st["current_situation"])
+        photo = BufferedInputFile(card_image.read(), filename='situation.png')
+        await bot.send_photo(
+            chat_id,
+            photo=photo,
+            caption=f"🎮 **Новый раунд!**\nВедущий: {host['username']}"
+        )
+    except Exception as e:
+        print(f"⚠️ Ошибка создания карточки: {e}")
+        await bot.send_message(
+            chat_id,
+            f"🎮 **Новый раунд!**\nВедущий: {host['username']}\n\n📝 Ситуация:\n{st['current_situation']}"
+        )
 
     # Подготовка колоды без использованных карт
     full_deck = decks.get_new_shuffled_answers_deck()
@@ -137,7 +150,7 @@ async def _start_round(bot: Bot, chat_id: int):
         st["used_answers"].clear()
         st["main_deck"] = decks.get_new_shuffled_answers_deck()
 
-    # ИСПРАВЛЕНО: Добираем карты только до 10, не перезаписываем руку
+    # Добираем карты только до 10, не перезаписываем руку
     for p in st["players"]:
         uid = p["user_id"]
         if uid == host_id:
@@ -236,7 +249,7 @@ async def on_pick(cb: CallbackQuery):
     # Начисление очка победителю
     st["scores"][win_uid] = st["scores"].get(win_uid, 0) + 1
 
-    # ИСПРАВЛЕНО: Удаление использованной карты и добавление в used_answers
+    # Удаление использованной карты и добавление в used_answers
     for uid, answer_data in st["answers"].items():
         hand = st["hands"].get(uid, [])
         card = answer_data["card"]
@@ -248,7 +261,7 @@ async def on_pick(cb: CallbackQuery):
         # Добавляем карту в использованные
         st["used_answers"].append(card)
         
-        # Обновляем руку (НЕ добираем здесь - это будет в следующем _start_round)
+        # Обновляем руку
         st["hands"][uid] = hand
 
     try:
