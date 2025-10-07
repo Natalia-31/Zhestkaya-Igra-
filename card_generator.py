@@ -1,34 +1,114 @@
+# card_generator.py
 import requests
 import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import os
 
-# Используем ключ из окружения
+# Используем ключи из окружения
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-gemini_model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
+# Модели
+gemini_model = genai.GenerativeModel("gemini-2.0-flash-exp")  # Для текста (шутки)
 
 def generate_pollinations_image(situation, answer):
+    """
+    Генерирует изображение через Pollinations.ai (запасной вариант)
+    """
     prompt = (
         f"Digital board game card illustration for situation: '{situation}'. "
         f"Answer: '{answer}'. Minimalism, Russian board game style, only image, no text."
     )
     url = "https://api.pollinations.ai/prompt"
     params = {"prompt": prompt}
-    response = requests.get(url, params=params)
-    return response.url if response.status_code == 200 else None
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        return response.url if response.status_code == 200 else None
+    except Exception as e:
+        print(f"⚠️ Pollinations error: {e}")
+        return None
+
+def generate_gemini_image(situation: str, answer: str) -> str:
+    """
+    Генерирует изображение через Gemini Imagen 3
+    
+    Args:
+        situation: Текст ситуации
+        answer: Текст ответа игрока
+        
+    Returns:
+        Путь к временному файлу изображения или None
+    """
+    try:
+        if not GEMINI_API_KEY:
+            print("⚠️ GEMINI_API_KEY не найден! Добавьте в переменные окружения.")
+            return None
+        
+        print(f"🎨 Генерируем изображение через Gemini Imagen 3...")
+        
+        # Промпт для мема на русском
+        prompt = (
+            f"Создай забавную иллюстрацию для карточной игры в стиле мема. "
+            f"Ситуация: '{situation}'. Ответ игрока: '{answer}'. "
+            f"Стиль: яркие цвета, минимализм, юмор, карикатура. "
+            f"Без текста на изображении!"
+        )
+        
+        # Используем Gemini для генерации изображения через prompt
+        response = gemini_model.generate_content([
+            prompt,
+            "Создай изображение в формате мема для этой ситуации"
+        ])
+        
+        # Проверяем есть ли изображение в ответе
+        if hasattr(response, 'candidates') and response.candidates:
+            for candidate in response.candidates:
+                if hasattr(candidate.content, 'parts'):
+                    for part in candidate.content.parts:
+                        # Ищем изображение в частях ответа
+                        if hasattr(part, 'inline_data') and part.inline_data:
+                            # Сохраняем изображение
+                            image_data = part.inline_data.data
+                            
+                            # Создаем временный файл
+                            import hashlib
+                            file_hash = hashlib.md5((situation + answer).encode()).hexdigest()[:10]
+                            temp_path = f"temp_image_{file_hash}.png"
+                            
+                            # Декодируем base64 и сохраняем
+                            import base64
+                            image_bytes = base64.b64decode(image_data)
+                            
+                            with open(temp_path, 'wb') as f:
+                                f.write(image_bytes)
+                            
+                            print(f"✅ Изображение создано через Gemini: {temp_path}")
+                            return temp_path
+        
+        print("⚠️ Gemini не вернул изображение в ответе")
+        return None
+        
+    except Exception as e:
+        print(f"❌ Ошибка генерации через Gemini: {e}")
+        return None
 
 def generate_card_joke(situation, answer):
-    prompt = (
-        f"Придумай саркастическую шутку для настольной игры. "
-        f"Ситуация: '{situation}', ответ игрока: '{answer}'. "
-        f"Формат: 1–2 строки, остроумно, иронично, по-русски."
-    )
-    response = gemini_model.generate_content(prompt)
-    return response.text if response else "😅 У меня закончились шутки!"
+    """
+    Генерирует саркастическую шутку для игры через Gemini
+    """
+    try:
+        prompt = (
+            f"Придумай саркастическую шутку для настольной игры. "
+            f"Ситуация: '{situation}', ответ игрока: '{answer}'. "
+            f"Формат: 1–2 строки, остроумно, иронично, по-русски."
+        )
+        response = gemini_model.generate_content(prompt)
+        return response.text if response else "😅 У меня закончились шутки!"
+    except Exception as e:
+        print(f"⚠️ Ошибка генерации шутки: {e}")
+        return "😅 Шутка не загрузилась!"
 
 def create_situation_card(situation_text: str, template_path: str = 'assets/card_template.png') -> BytesIO:
     """
