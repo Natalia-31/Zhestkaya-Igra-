@@ -53,6 +53,20 @@ class DeckManager:
         deck = list(self.answers)
         random.shuffle(deck)
         return deck
+    
+    # ====== НОВЫЕ ФУНКЦИИ для отслеживания ситуаций ======
+    def get_all_situations(self) -> List[str]:
+        """
+        Возвращает список всех доступных ситуаций
+        """
+        return list(self.situations)
+    
+    def get_random_from_list(self, situations_list: List[str]) -> str:
+        """
+        Возвращает случайную ситуацию из переданного списка
+        """
+        return random.choice(situations_list) if situations_list else "Тестовая ситуация"
+    # ====== КОНЕЦ НОВЫХ ФУНКЦИЙ ======
 
 # ====== Генерация изображений ======
 
