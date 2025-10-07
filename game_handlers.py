@@ -75,7 +75,8 @@ async def _create_game(chat_id: int, host_id: int, host_name: str):
         "host_idx": -1,
         "current_situation": None,
         "main_deck": [],
-        "used_answers": []
+        "used_answers": [],
+        "used_situations": []  # Добавлено для отслеживания использованных ситуаций
     }
 
 async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedback: Message):
@@ -124,7 +125,32 @@ async def _start_round(bot: Bot, chat_id: int):
     host = st["players"][st["host_idx"]]
     host_id = host["user_id"]
 
-    st["current_situation"] = decks.get_random_situation()
+    # ====== ИСПРАВЛЕНО: Отслеживание использованных ситуаций ======
+    # Инициализируем список использованных ситуаций, если его нет
+    if "used_situations" not in st:
+        st["used_situations"] = []
+    
+    # Получаем все доступные ситуации
+    all_situations = decks.get_all_situations()
+    
+    # Фильтруем неиспользованные ситуации
+    available_situations = [s for s in all_situations if s not in st["used_situations"]]
+    
+    # Если все ситуации использованы - начинаем заново
+    if not available_situations:
+        print("♻️ Все ситуации использованы! Сброс использованных ситуаций.")
+        st["used_situations"] = []
+        available_situations = all_situations
+    
+    # Выбираем случайную неиспользованную ситуацию
+    st["current_situation"] = decks.get_random_from_list(available_situations)
+    
+    # Добавляем в список использованных
+    st["used_situations"].append(st["current_situation"])
+    
+    print(f"🎲 Выбрана ситуация: {st['current_situation']}")
+    print(f"📊 Использовано ситуаций: {len(st['used_situations'])}/{len(all_situations)}")
+    # ====== КОНЕЦ ИСПРАВЛЕНИЯ ======
     
     # Отправляем карточку вместо текста
     try:
