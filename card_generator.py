@@ -137,14 +137,16 @@ def create_situation_card(situation_text: str, template_path: str = 'assets/card
         'assets/fonts/RussoOne-Regular.ttf',  # Резервный
         'assets/fonts/DejaVuSans.ttf',  # Резервный
         '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',  # Linux
-        'C:\\Windows\\Fonts\\arial.ttf',  # Windows (исправлены слэши)
+        'C:/Windows/Fonts/DejaVuSans.ttf',  # Windows DejaVu (хорошая кириллица)
+        'C:/Windows/Fonts/arial.ttf',  # Windows Arial
+        'C:/Windows/Fonts/tahoma.ttf',  # Windows Tahoma
         '/System/Library/Fonts/Helvetica.ttc',  # macOS
     ]
     
     font = None
     for font_path in font_paths:
         try:
-            font = ImageFont.truetype(font_path, 38)  # Размер 38 для Stalinist One
+            font = ImageFont.truetype(font_path, 38, encoding="unic")  # Добавлен encoding для кириллицы
             print(f"✅ Шрифт загружен: {font_path}")
             break
         except Exception as e:
