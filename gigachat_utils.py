@@ -36,20 +36,13 @@ class GigaChatImageGenerator:
     def _create_retry_session(self, retries=3, backoff_factor=1.0):
         """
         Создает сессию с автоматическими повторными попытками
-        
-        Args:
-            retries: Количество попыток (по умолчанию 3)
-            backoff_factor: Множитель задержки между попытками
-            
-        Returns:
-            Настроенная сессия requests
         """
         session = requests.Session()
         
         retry_strategy = Retry(
-            total=retries,  # Всего попыток
-            backoff_factor=backoff_factor,  # Задержка: 1, 2, 4 секунды
-            status_forcelist=[429, 500, 502, 503, 504],  # HTTP коды для retry
+            total=retries,
+            backoff_factor=backoff_factor,
+            status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"]
         )
         
@@ -62,9 +55,6 @@ class GigaChatImageGenerator:
     def _get_access_token(self) -> Optional[str]:
         """
         Получение access token для GigaChat API
-        
-        Returns:
-            Access token или None при ошибке
         """
         try:
             if not GIGACHAT_AUTH_KEY:
@@ -86,7 +76,7 @@ class GigaChatImageGenerator:
                 headers=headers,
                 data=data,
                 verify=False,
-                timeout=(10, 15)  # (connect timeout, read timeout)
+                timeout=(10, 15)
             )
             
             if response.status_code == 200:
@@ -107,14 +97,33 @@ class GigaChatImageGenerator:
     def _ensure_token(self) -> bool:
         """
         Проверяет токен и обновляет при необходимости
-        
-        Returns:
-            True если токен валиден, False при ошибке
         """
         if not self.access_token or time.time() >= self.token_expiry:
             print("🔄 Обновление токена GigaChat...")
             return self._get_access_token() is not None
         return True
+    
+    def _clean_prompt(self, prompt: str) -> str:
+        """
+        Очищает промпт от слов, вызывающих появление игральных карт
+        
+        Args:
+            prompt: Исходный промпт
+            
+        Returns:
+            Очищенный промпт с негативными указаниями
+        """
+        # Заменяем проблемные слова
+        clean = prompt.replace("карта", "ситуация")
+        clean = clean.replace("Карта", "Ситуация")
+        clean = clean.replace("карту", "ситуацию")
+        clean = clean.replace("игра", "сцена")
+        clean = clean.replace("Игра", "Сцена")
+        
+        # Добавляем негативные промпты
+        negative_prompt = ". ВАЖНО: БЕЗ игральных карт, БЕЗ покера, БЕЗ карточек, БЕЗ текста на изображении, БЕЗ надписей. Простая яркая иллюстрация в стиле мема"
+        
+        return clean + negative_prompt
     
     def generate_image(self, prompt: str, max_attempts=2) -> Optional[str]:
         """
@@ -133,7 +142,11 @@ class GigaChatImageGenerator:
                 if not self._ensure_token():
                     return None
                 
+                # Очищаем промпт от проблемных слов
+                clean_prompt = self._clean_prompt(prompt)
+                
                 print(f"🎨 Генерация изображения через GigaChat + Kandinsky (попытка {attempt + 1}/{max_attempts})...")
+                print(f"   Промпт: {clean_prompt[:100]}...")
                 
                 # Формируем запрос для генерации изображения
                 headers = {
@@ -145,32 +158,33 @@ class GigaChatImageGenerator:
                     "model": "GigaChat",
                     "messages": [
                         {
+                            "role": "system",
+                            "content": "Ты художник-иллюстратор для интернет-мемов. НЕ рисуй игральные карты, покерные карты, карточки и текст на изображениях. Создавай простые яркие иллюстрации в стиле мемов."
+                        },
+                        {
                             "role": "user",
-                            "content": f"Нарисуй изображение: {prompt}"
+                            "content": f"Нарисуй изображение: {clean_prompt}"
                         }
                     ],
                     "function_call": "auto"
                 }
                 
                 # Отправляем запрос с увеличенным timeout
-                # Генерация изображений может занимать 60+ секунд
                 response = self.session.post(
                     self.chat_url,
                     headers=headers,
                     json=data,
                     verify=False,
-                    timeout=(15, 90)  # connect: 15s, read: 90s для генерации изображений
+                    timeout=(15, 90)  # connect: 15s, read: 90s
                 )
                 
                 if response.status_code != 200:
                     print(f"⚠️ GigaChat вернул ошибку: {response.status_code}")
                     print(f"   Ответ: {response.text}")
                     
-                    # Если это последняя попытка, возвращаем None
                     if attempt == max_attempts - 1:
                         return None
                     
-                    # Иначе ждем и пробуем снова
                     print(f"   Ожидание {(attempt + 1) * 3} секунд перед повтором...")
                     time.sleep((attempt + 1) * 3)
                     continue
@@ -180,7 +194,7 @@ class GigaChatImageGenerator:
                 # Извлекаем file_id изображения
                 content = result["choices"][0]["message"]["content"]
                 
-                # Ищем file_id в ответе (формат: <img src="file_id"/>)
+                # Ищем file_id в ответе
                 file_id_match = re.search(r'<img src="([^"]+)"', content)
                 
                 if not file_id_match:
