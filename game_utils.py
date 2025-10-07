@@ -8,6 +8,7 @@ import asyncio
 import aiohttp
 from dotenv import load_dotenv
 import google.generativeai as genai
+from gigachat_utils import gigachat_generator  # НОВОЕ: импорт GigaChat
 
 # ====== Загрузка ключей ======
 load_dotenv()
@@ -15,11 +16,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# Модели Gemini
-gemini_text_model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")  # Для текста
-gemini_image_model = genai.GenerativeModel("gemini-2.5-flash-image")  # Для изображений (500 бесплатно/день)
+# Модель Gemini для текста (шутки)
+gemini_text_model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
 
-# Менеджер колод
+# ====== Менеджер колод ======
 class DeckManager:
     def __init__(self, situations_file: str = "situations.json", answers_file: str = "answers.json", base: Path | None = None):
         self.base_dir = base or Path(__file__).resolve().parent
@@ -54,67 +54,43 @@ class DeckManager:
         random.shuffle(deck)
         return deck
 
-# ====== НОВОЕ: Генерация изображений через Gemini 2.5 Flash Image ======
-async def generate_gemini_image(situation: str, answer: str) -> Optional[str]:
+# ====== Генерация изображений ======
+
+async def generate_gigachat_image(situation: str, answer: str) -> Optional[str]:
     """
-    Генерирует изображение через Gemini 2.5 Flash Image (500 бесплатно/день)
+    Генерирует изображение через GigaChat + Kandinsky 3.1
     
     Returns:
-        URL изображения или путь к временному файлу
+        Путь к локальному файлу или None
     """
     try:
-        if not GEMINI_API_KEY:
-            print("⚠️ GEMINI_API_KEY не найден!")
-            return None
-        
-        print(f"🎨 Генерация через Gemini 2.5 Flash Image...")
+        print(f"🎨 Генерация через GigaChat + Kandinsky 3.1...")
         
         # Промпт для мема на русском
         prompt = (
             f"Создай забавную иллюстрацию-мем для карточной игры. "
             f"Ситуация: '{situation}'. Ответ игрока: '{answer}'. "
-            f"Стиль: яркие цвета, минимализм, юмор, карикатура, мемный стиль. "
+            f"Стиль: яркие цвета, минимализм, юмор, мемный стиль. "
             f"БЕЗ текста на изображении!"
         )
         
-        # Генерация изображения
-        response = await asyncio.to_thread(
-            gemini_image_model.generate_content,
+        # Вызываем GigaChat синхронно в отдельном потоке
+        image_path = await asyncio.to_thread(
+            gigachat_generator.generate_image,
             prompt
         )
         
-        # Извлекаем изображение из ответа
-        if hasattr(response, 'candidates') and response.candidates:
-            for candidate in response.candidates:
-                if hasattr(candidate.content, 'parts'):
-                    for part in candidate.content.parts:
-                        # Ищем изображение
-                        if hasattr(part, 'inline_data') and part.inline_data:
-                            import base64
-                            import hashlib
-                            
-                            # Декодируем base64
-                            image_data = part.inline_data.data
-                            image_bytes = base64.b64decode(image_data)
-                            
-                            # Сохраняем временно
-                            file_hash = hashlib.md5((situation + answer).encode()).hexdigest()[:10]
-                            temp_path = f"temp_image_{file_hash}.png"
-                            
-                            with open(temp_path, 'wb') as f:
-                                f.write(image_bytes)
-                            
-                            print(f"✅ Gemini Image сгенерировал: {temp_path}")
-                            return temp_path
-        
-        print("⚠️ Gemini не вернул изображение")
-        return None
+        if image_path:
+            print(f"✅ GigaChat успешно сгенерировал изображение")
+            return image_path
+        else:
+            print("⚠️ GigaChat не вернул изображение")
+            return None
         
     except Exception as e:
-        print(f"❌ Ошибка Gemini Image: {e}")
+        print(f"❌ Ошибка GigaChat Image: {e}")
         return None
 
-# Генерация изображения через Pollinations (запасной вариант)
 async def generate_pollinations_image(situation: str, answer: str) -> Optional[str]:
     """
     Генерация через Pollinations.ai (запасной вариант)
@@ -135,7 +111,8 @@ async def generate_pollinations_image(situation: str, answer: str) -> Optional[s
         print(f"⚠️ Pollinations error: {e}")
     return None
 
-# Генерация шутки через Gemini API
+# ====== Генерация шутки через Gemini ======
+
 async def generate_card_joke(situation: str, answer: str) -> str:
     """
     Генерирует саркастическую шутку через Gemini
@@ -156,23 +133,24 @@ async def generate_card_joke(situation: str, answer: str) -> str:
         print(f"⚠️ Ошибка генерации шутки: {e}")
         return "😅 Не удалось сгенерировать шутку."
 
-# Основная функция генерации карточного контента
+# ====== Основная функция генерации контента ======
+
 async def generate_card_content(situation: str, answer: str) -> Tuple[Optional[str], str]:
     """
     Генерирует изображение и шутку для выигрышной комбинации
     
     Приоритет генерации:
-    1. Gemini 2.5 Flash Image (500 бесплатно/день) ✅
+    1. GigaChat + Kandinsky 3.1 (лучшее качество, русский язык) ✅
     2. Pollinations.ai (запасной вариант)
     
     Returns:
-        (image_url_or_path, joke_text)
+        (image_path_or_url, joke_text)
     """
     # Генерируем шутку параллельно
     joke_task = asyncio.create_task(generate_card_joke(situation, answer))
     
-    # 1. Пробуем Gemini Image (ПРИОРИТЕТ - лучшее качество, 500/день)
-    image_result = await generate_gemini_image(situation, answer)
+    # 1. Пробуем GigaChat + Kandinsky (ПРИОРИТЕТ - лучшее качество)
+    image_result = await generate_gigachat_image(situation, answer)
     
     if not image_result:
         # 2. Запасной вариант - Pollinations
@@ -184,5 +162,5 @@ async def generate_card_content(situation: str, answer: str) -> Tuple[Optional[s
     
     return image_result, joke_text
 
-# Инициализация менеджера колод
+# ====== Инициализация менеджера колод ======
 decks = DeckManager(base=Path(__file__).resolve().parent)
