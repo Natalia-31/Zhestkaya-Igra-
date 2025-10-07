@@ -1,4 +1,4 @@
-# game_utils/decks.py
+# game_utils.py
 import os
 import json
 import random
@@ -8,7 +8,7 @@ import asyncio
 import aiohttp
 from dotenv import load_dotenv
 import google.generativeai as genai
-from gigachat_utils import gigachat_generator  # НОВОЕ: импорт GigaChat
+from gigachat_utils import gigachat_generator  # Импорт GigaChat
 
 # ====== Загрузка ключей ======
 load_dotenv()
@@ -59,14 +59,10 @@ class DeckManager:
 async def generate_gigachat_image(situation: str, answer: str) -> Optional[str]:
     """
     Генерирует изображение через GigaChat + Kandinsky 3.1
-    
-    Returns:
-        Путь к локальному файлу или None
     """
     try:
         print(f"🎨 Генерация через GigaChat + Kandinsky 3.1...")
         
-        # Промпт для мема на русском
         prompt = (
             f"Создай забавную иллюстрацию-мем для карточной игры. "
             f"Ситуация: '{situation}'. Ответ игрока: '{answer}'. "
@@ -74,7 +70,7 @@ async def generate_gigachat_image(situation: str, answer: str) -> Optional[str]:
             f"БЕЗ текста на изображении!"
         )
         
-        # Вызываем GigaChat синхронно в отдельном потоке
+        # Вызываем GigaChat
         image_path = await asyncio.to_thread(
             gigachat_generator.generate_image,
             prompt
@@ -88,7 +84,7 @@ async def generate_gigachat_image(situation: str, answer: str) -> Optional[str]:
             return None
         
     except Exception as e:
-        print(f"❌ Ошибка GigaChat Image: {e}")
+        print(f"❌ Ошибка GigaChat: {e}")
         return None
 
 async def generate_pollinations_image(situation: str, answer: str) -> Optional[str]:
@@ -97,7 +93,7 @@ async def generate_pollinations_image(situation: str, answer: str) -> Optional[s
     """
     prompt = (
         f"Cartoon style card for a Russian Telegram game 'Жесткая игра': Situation: {situation}, "
-        f"Player's answer: {answer}. Minimalism, humor, bold lines, no text overlay on the image itself."
+        f"Player's answer: {answer}. Minimalism, humor, bold lines, no text overlay."
     )
     url = "https://api.pollinations.ai/prompt"
     params = {"prompt": prompt}
@@ -111,11 +107,9 @@ async def generate_pollinations_image(situation: str, answer: str) -> Optional[s
         print(f"⚠️ Pollinations error: {e}")
     return None
 
-# ====== Генерация шутки через Gemini ======
-
 async def generate_card_joke(situation: str, answer: str) -> str:
     """
-    Генерирует саркастическую шутку через Gemini
+    Генерирует шутку через Gemini
     """
     if not gemini_text_model:
         return f"Ситуация: {situation} | Ответ: {answer}"
@@ -133,34 +127,28 @@ async def generate_card_joke(situation: str, answer: str) -> str:
         print(f"⚠️ Ошибка генерации шутки: {e}")
         return "😅 Не удалось сгенерировать шутку."
 
-# ====== Основная функция генерации контента ======
-
 async def generate_card_content(situation: str, answer: str) -> Tuple[Optional[str], str]:
     """
-    Генерирует изображение и шутку для выигрышной комбинации
+    Генерирует изображение и шутку
     
-    Приоритет генерации:
-    1. GigaChat + Kandinsky 3.1 (лучшее качество, русский язык) ✅
-    2. Pollinations.ai (запасной вариант)
-    
-    Returns:
-        (image_path_or_url, joke_text)
+    Приоритет:
+    1. GigaChat + Kandinsky 3.1 ✅
+    2. Pollinations.ai (запасной)
     """
     # Генерируем шутку параллельно
     joke_task = asyncio.create_task(generate_card_joke(situation, answer))
     
-    # 1. Пробуем GigaChat + Kandinsky (ПРИОРИТЕТ - лучшее качество)
+    # 1. Пробуем GigaChat
     image_result = await generate_gigachat_image(situation, answer)
     
     if not image_result:
-        # 2. Запасной вариант - Pollinations
+        # 2. Запасной вариант
         print("🔄 Переключаемся на Pollinations...")
         image_result = await generate_pollinations_image(situation, answer)
     
-    # Ждем шутку
     joke_text = await joke_task
     
     return image_result, joke_text
 
-# ====== Инициализация менеджера колод ======
+# Инициализация менеджера колод
 decks = DeckManager(base=Path(__file__).resolve().parent)
