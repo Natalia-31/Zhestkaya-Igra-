@@ -1,10 +1,10 @@
 # gigachat_utils.py
 import os
-import base64
 import uuid
 import requests
 import re
 import hashlib
+import time
 from typing import Optional
 from dotenv import load_dotenv
 import warnings
@@ -14,8 +14,7 @@ warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 load_dotenv()
 
-GIGACHAT_CLIENT_ID = os.getenv("GIGACHAT_CLIENT_ID")
-GIGACHAT_CLIENT_SECRET = os.getenv("GIGACHAT_CLIENT_SECRET")
+GIGACHAT_AUTH_KEY = os.getenv("GIGACHAT_AUTH_KEY")
 
 class GigaChatImageGenerator:
     """
@@ -24,6 +23,7 @@ class GigaChatImageGenerator:
     
     def __init__(self):
         self.access_token = None
+        self.token_expiry = 0  # Время истечения токена
         self.token_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
         self.chat_url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
         self.files_url = "https://gigachat.devices.sberbank.ru/api/v1/files"
@@ -36,16 +36,12 @@ class GigaChatImageGenerator:
             Access token или None при ошибке
         """
         try:
-            if not GIGACHAT_CLIENT_ID or not GIGACHAT_CLIENT_SECRET:
-                print("❌ GIGACHAT_CLIENT_ID или GIGACHAT_CLIENT_SECRET не найдены в .env")
+            if not GIGACHAT_AUTH_KEY:
+                print("❌ GIGACHAT_AUTH_KEY не найден в .env")
                 return None
             
-            # Создаем Basic Auth токен
-            credentials = f"{GIGACHAT_CLIENT_ID}:{GIGACHAT_CLIENT_SECRET}"
-            encoded_credentials = base64.b64encode(credentials.encode()).decode()
-            
             headers = {
-                "Authorization": f"Basic {encoded_credentials}",
+                "Authorization": f"Basic {GIGACHAT_AUTH_KEY}",  # Используем напрямую
                 "RqUID": str(uuid.uuid4()),
                 "Content-Type": "application/x-www-form-urlencoded"
             }
@@ -63,7 +59,10 @@ class GigaChatImageGenerator:
             )
             
             if response.status_code == 200:
-                self.access_token = response.json()["access_token"]
+                result = response.json()
+                self.access_token = result["access_token"]
+                # Сохраняем время истечения (30 минут - 1 минута запас)
+                self.token_expiry = time.time() + 1740  # 29 минут
                 print(f"✅ GigaChat токен получен")
                 return self.access_token
             else:
@@ -74,6 +73,19 @@ class GigaChatImageGenerator:
         except Exception as e:
             print(f"❌ Ошибка GigaChat auth: {e}")
             return None
+    
+    def _ensure_token(self) -> bool:
+        """
+        Проверяет токен и обновляет при необходимости
+        
+        Returns:
+            True если токен валиден, False при ошибке
+        """
+        # Если токена нет или он истек
+        if not self.access_token or time.time() >= self.token_expiry:
+            print("🔄 Обновление токена GigaChat...")
+            return self._get_access_token() is not None
+        return True
     
     def generate_image(self, prompt: str) -> Optional[str]:
         """
@@ -86,10 +98,9 @@ class GigaChatImageGenerator:
             Путь к сохраненному изображению или None при ошибке
         """
         try:
-            # Получаем токен если его нет
-            if not self.access_token:
-                if not self._get_access_token():
-                    return None
+            # Проверяем/обновляем токен
+            if not self._ensure_token():
+                return None
             
             print(f"🎨 Генерация изображения через GigaChat + Kandinsky...")
             
@@ -118,22 +129,6 @@ class GigaChatImageGenerator:
                 verify=False,
                 timeout=30
             )
-            
-            # Если токен устарел - обновляем
-            if response.status_code == 401:
-                print("⚠️ Токен устарел, обновляем...")
-                if not self._get_access_token():
-                    return None
-                # Обновляем заголовки с новым токеном
-                headers["Authorization"] = f"Bearer {self.access_token}"
-                # Повторяем запрос
-                response = requests.post(
-                    self.chat_url,
-                    headers=headers,
-                    json=data,
-                    verify=False,
-                    timeout=30
-                )
             
             if response.status_code != 200:
                 print(f"⚠️ GigaChat вернул ошибку: {response.status_code}")
