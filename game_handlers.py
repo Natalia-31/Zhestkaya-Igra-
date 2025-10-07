@@ -1,8 +1,9 @@
 # handlers/game_handlers.py
 import asyncio
+import os
 from typing import Dict, Any
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, FSInputFile
 from aiogram.filters import Command, CommandStart
 from aiogram.exceptions import TelegramBadRequest
 
@@ -297,11 +298,36 @@ async def on_pick(cb: CallbackQuery):
         f"🏆 **Победитель раунда:** {win_name}\n💬 **Ответ:** _{win_ans}_\n\n⭐ Очков: {st['scores'][win_uid]}"
     )
 
-    # Генерация шутки и картинки
-    image_url, joke = await generate_card_content(st["current_situation"], win_ans)
-    if image_url:
-        await cb.bot.send_photo(group_chat_id, image_url, caption=f"😄 {joke or ''}")
+    # ====== ОБНОВЛЕНО: Генерация шутки и картинки ======
+    image_result, joke = await generate_card_content(st["current_situation"], win_ans)
+    
+    if image_result:
+        try:
+            # Проверяем - это локальный файл или URL
+            if image_result.startswith('temp_image_') or os.path.isfile(image_result):
+                # Локальный файл от Gemini
+                print(f"📤 Отправляем локальный файл: {image_result}")
+                photo = FSInputFile(image_result)
+                await cb.bot.send_photo(
+                    group_chat_id, 
+                    photo=photo,
+                    caption=f"😄 {joke or ''}"
+                )
+                # Удаляем временный файл
+                try:
+                    os.remove(image_result)
+                    print(f"🗑️ Временный файл удален: {image_result}")
+                except Exception as e:
+                    print(f"⚠️ Не удалось удалить файл: {e}")
+            else:
+                # URL от Pollinations
+                print(f"📤 Отправляем URL: {image_result}")
+                await cb.bot.send_photo(group_chat_id, image_result, caption=f"😄 {joke or ''}")
+        except Exception as e:
+            print(f"⚠️ Ошибка отправки изображения: {e}")
+            await cb.bot.send_message(group_chat_id, f"😄 **Шутка:** {joke or '—'}")
     else:
+        # Только шутка без картинки
         await cb.bot.send_message(group_chat_id, f"😄 **Шутка:** {joke or '—'}")
 
     # Показать текущую статистику
