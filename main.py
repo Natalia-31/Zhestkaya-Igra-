@@ -40,8 +40,8 @@ async def generate_gemini_response(text: str) -> str:
 async def send_welcome_video(message: Message, bot: Bot):
     """Отправляет приветственное видео при старте"""
     try:
-        if os.path.exists(WELCOME_VIDEO_PATH):
-            video = FSInputFile(WELCOME_VIDEO_PATH)
+        if os.path.exists("assets/welcome.mp4"):
+            video = FSInputFile("assets/welcome.mp4")
             await bot.send_video(
                 chat_id=message.chat.id,
                 video=video,
@@ -49,7 +49,7 @@ async def send_welcome_video(message: Message, bot: Bot):
             )
         else:
             await message.answer("🎮 Добро пожаловать в игру!")
-            logging.warning(f"Видео не найдено по пути: {WELCOME_VIDEO_PATH}")
+            logging.warning(f"Видео не найдено по пути: {"assets/welcome.mp4"}")
     except Exception as e:
         logging.error(f"Ошибка при отправке приветственного видео: {e}")
         await message.answer("🎮 Добро пожаловать в игру!")
