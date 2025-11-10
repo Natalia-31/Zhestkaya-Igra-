@@ -8,23 +8,45 @@ import asyncio
 import aiohttp
 from dotenv import load_dotenv
 import google.generativeai as genai
-from gigachat_utils import gigachat_generator  # Импорт GigaChat
+from gigachat_utils import gigachat_generator
 
 # ====== Загрузка ключей ======
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
     print("✅ Gemini API настроен")
 else:
     print("⚠️ GEMINI_API_KEY не найден")
 
-# Модель Gemini для текста (шутки) - ИСПРАВЛЕНО
+# Модель Gemini - ИСПРАВЛЕНО для работы с текущей версией API
 try:
-    gemini_text_model = genai.GenerativeModel("gemini-1.5-flash")
-    print("✅ Модель Gemini инициализирована")
+    # Попробуем несколько вариантов моделей
+    model_names = [
+        "gemini-pro",  # Старая стабильная модель
+        "gemini-1.5-pro-latest",
+        "gemini-1.5-flash-latest",
+        "models/gemini-pro",
+    ]
+    
+    gemini_text_model = None
+    for model_name in model_names:
+        try:
+            gemini_text_model = genai.GenerativeModel(model_name)
+            # Пробуем сгенерировать тестовый запрос
+            test_response = gemini_text_model.generate_content("test")
+            print(f"✅ Модель {model_name} инициализирована успешно")
+            break
+        except Exception as e:
+            print(f"⚠️ Модель {model_name} недоступна: {e}")
+            continue
+    
+    if not gemini_text_model:
+        print("❌ Ни одна модель Gemini не доступна")
+        
 except Exception as e:
-    print(f"⚠️ Ошибка инициализации Gemini: {e}")
+    print(f"❌ Ошибка инициализации Gemini: {e}")
     gemini_text_model = None
 
 # ====== Менеджер колод ======
@@ -63,11 +85,9 @@ class DeckManager:
         return deck
     
     def get_all_situations(self) -> List[str]:
-        """Возвращает список всех доступных ситуаций"""
         return list(self.situations)
     
     def get_random_from_list(self, situations_list: List[str]) -> str:
-        """Возвращает случайную ситуацию из переданного списка"""
         return random.choice(situations_list) if situations_list else "Тестовая ситуация"
 
 # ====== Генерация изображений ======
@@ -78,7 +98,7 @@ async def generate_gigachat_image(situation: str, answer: str) -> Optional[str]:
         print(f"🎨 Генерация через GigaChat + Kandinsky 3.1...")
         
         prompt = (
-            f"Создай яркую комичную иллюстрацию . "
+            f"Создай яркую комичную иллюстрацию. "
             f"Игровая ситуация: '{situation}'. "
             f"Ответ игрока: '{answer}'. "
             f"Визуальный стиль: современный мем-арт, сочные насыщенные цвета, "
@@ -106,15 +126,15 @@ async def generate_gigachat_image(situation: str, answer: str) -> Optional[str]:
 async def generate_pollinations_image(situation: str, answer: str) -> Optional[str]:
     """Генерация через Pollinations.ai (запасной вариант)"""
     prompt = (
-        f"Cartoon style card for a Russian Telegram game 'Жесткая игра': Situation: {situation}, "
-        f"Player's answer: {answer}. Minimalism, humor, bold lines, no text overlay."
+        f"Cartoon style card for a Russian Telegram game: Situation: {situation}, "
+        f"Player answer: {answer}. Minimalism, humor, bold lines, no text."
     )
-    url = "https://image.pollinations.ai/prompt/" + prompt
+    url = f"https://image.pollinations.ai/prompt/{prompt}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=20) as resp:
                 if resp.status == 200:
-                    print(f"✅ Pollinations вернул изображение: {resp.url}")
+                    print(f"✅ Pollinations вернул изображение")
                     return str(resp.url)
     except Exception as e:
         print(f"⚠️ Pollinations error: {e}")
@@ -123,21 +143,21 @@ async def generate_pollinations_image(situation: str, answer: str) -> Optional[s
 async def generate_card_joke(situation: str, answer: str) -> str:
     """Генерирует шутку через Gemini"""
     
-    # ДОБАВЛЕНЫ ПРОВЕРКИ
     if not GEMINI_API_KEY:
         print("⚠️ GEMINI_API_KEY не задан")
-        return "😅 Шутка недоступна (нет API ключа)"
+        return f"Ситуация: {situation} | Ответ: {answer} 😄"
     
     if not gemini_text_model:
         print("⚠️ Модель Gemini не инициализирована")
-        return f"Ситуация: {situation} | Ответ: {answer}"
+        return f"Отличный выбор! '{answer}' - именно то, что нужно! 😄"
     
     prompt = (
         f"Придумай короткую смешную подпись для настольной игры.\n"
         f"Ситуация: {situation}\n"
         f"Ответ игрока: {answer}\n"
-        "Формат: саркастический мем, максимум 2 строки, на русском."
+        f"Формат: саркастический мем, максимум 2 строки, на русском."
     )
+    
     try:
         print(f"🤖 Генерирую шутку через Gemini...")
         response = await asyncio.to_thread(gemini_text_model.generate_content, prompt)
@@ -146,18 +166,11 @@ async def generate_card_joke(situation: str, answer: str) -> str:
         return joke
     except Exception as e:
         print(f"❌ Ошибка генерации шутки: {e}")
-        import traceback
-        traceback.print_exc()
-        return "😅 Не удалось сгенерировать шутку."
+        # Запасной вариант - простая шутка
+        return f"'{answer}' - гениально! Именно это я и хотел услышать! 🎉"
 
 async def generate_card_content(situation: str, answer: str) -> Tuple[Optional[str], str]:
-    """
-    Генерирует изображение и шутку
-    
-    Приоритет:
-    1. GigaChat + Kandinsky 3.1 ✅
-    2. Pollinations.ai (запасной)
-    """
+    """Генерирует изображение и шутку"""
     print(f"📝 Генерация контента для: '{situation}' + '{answer}'")
     
     # Генерируем шутку параллельно
