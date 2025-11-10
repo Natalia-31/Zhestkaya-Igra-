@@ -4,6 +4,7 @@ import pathlib
 import game_utils
 import random
 import asyncio
+import re
 
 print("CWD:", os.getcwd())
 print("game_utils file:", inspect.getfile(game_utils))
@@ -82,6 +83,60 @@ class BotPlayer:
         answer = await self.generate_answer(situation, available_answers)
         logging.info(f"Бот {self.name} выбрал ответ: {answer}")
         return answer
+    
+    async def choose_winner(self, situation: str, players_answers: list) -> int:
+        """
+        Выбирает лучший ответ как ведущий
+        
+        Args:
+            situation: Игровая ситуация
+            players_answers: Список кортежей (имя_игрока, ответ)
+        
+        Returns:
+            Индекс победителя (0, 1, 2, ...)
+        """
+        if self.use_ai and GEMINI_API_KEY:
+            try:
+                # Формируем список ответов для AI
+                answers_text = "\n".join([
+                    f"{i+1}. {name}: {answer}" 
+                    for i, (name, answer) in enumerate(players_answers)
+                ])
+                
+                prompt = f"""Ты ведущий в игре. Твоя задача - выбрать самый смешной, остроумный и подходящий ответ.
+
+Ситуация: {situation}
+
+Ответы игроков:
+{answers_text}
+
+Выбери ТОЛЬКО НОМЕР лучшего ответа (1, 2, 3 и т.д.).
+Верни только число, без пояснений."""
+                
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                response = await asyncio.to_thread(model.generate_content, prompt)
+                answer_text = response.text.strip()
+                
+                # Извлекаем номер из ответа
+                numbers = re.findall(r'\d+', answer_text)
+                if numbers:
+                    chosen_number = int(numbers[0])
+                    # Конвертируем в индекс (от 1 до 0-based)
+                    if 1 <= chosen_number <= len(players_answers):
+                        chosen_idx = chosen_number - 1
+                        print(f"🤖 Бот-ведущий {self.name} выбрал ответ #{chosen_number}: {players_answers[chosen_idx][1]}")
+                        return chosen_idx
+                
+                # Если AI не дал корректный ответ
+                print(f"⚠️ AI вернул некорректный номер: {answer_text}")
+                return random.randint(0, len(players_answers) - 1)
+                
+            except Exception as e:
+                logging.error(f"Ошибка при выборе победителя ботом {self.name}: {e}")
+                return random.randint(0, len(players_answers) - 1)
+        else:
+            # Случайный выбор если AI недоступен
+            return random.randint(0, len(players_answers) - 1)
 
 
 # Создаем двух ботов-игроков
@@ -118,6 +173,8 @@ async def main():
     
     logging.info("Бот запущен и готов к работе")
     logging.info("Боты-игроки активированы: 🤖 БотИгрок1 и 🤖 БотИгрок2")
+    logging.info("Боты могут быть ведущими и автоматически выбирать победителей")
+    logging.info("Ответы игроков отображаются анонимно")
     await dp.start_polling(bot)
 
 
