@@ -14,7 +14,7 @@ from card_generator import create_situation_card
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
 
-# Глобальные переменные для ботов (будут установлены при инициализации)
+# Глобальные переменные для ботов
 BOT_PLAYERS: List = []
 
 def set_bot_players(bot_players: list):
@@ -33,7 +33,6 @@ def main_menu() -> InlineKeyboardMarkup:
 
 @router.message(CommandStart())
 async def cmd_start(m: Message):
-    # Приветственное видео
     WELCOME_VIDEO_PATH = "assets/welcome.mp4"
     try:
         if os.path.exists(WELCOME_VIDEO_PATH):
@@ -42,12 +41,14 @@ async def cmd_start(m: Message):
                 chat_id=m.chat.id,
                 video=video,
                 caption="🎮 Добро пожаловать в Жесткую Игру!\n\n"
-                        "В игре участвуют 2 бота-игрока: 🤖 БотИгрок1 и 🤖 БотИгрок2"
+                        "✨ Особенности:\n"
+                        "• 2 бота-игрока: 🤖 БотИгрок1 и 🤖 БотИгрок2\n"
+                        "• Боты могут быть игроками и ведущими\n"
+                        "• Анонимные ответы для честной игры!"
             )
     except Exception as e:
         print(f"⚠️ Ошибка отправки видео: {e}")
     
-    # Меню с кнопками
     await m.answer("Используйте меню для управления игрой:", reply_markup=main_menu())
 
 @router.message(Command("new_game"))
@@ -101,10 +102,11 @@ async def _create_game(chat_id: int, host_id: int, host_name: str, bot: Bot):
         "current_situation": None,
         "main_deck": [],
         "used_answers": [],
-        "used_situations": []
+        "used_situations": [],
+        "shuffled_answers": [],
+        "answers_with_authors": []
     }
     
-    # Добавляем ботов как игроков
     for bot_player in BOT_PLAYERS:
         SESSIONS[chat_id]["players"].append({
             "user_id": bot_player.bot_id,
@@ -170,9 +172,17 @@ async def _start_round(bot: Bot, chat_id: int):
         return
 
     st["answers"].clear()
+    st["shuffled_answers"] = []
+    st["answers_with_authors"] = []
+    
+    # Теперь боты тоже могут быть ведущими
     st["host_idx"] = (st["host_idx"] + 1) % len(st["players"])
     host = st["players"][st["host_idx"]]
     host_id = host["user_id"]
+    is_bot_host = host.get("is_bot", False)
+    
+    host_label = f"{host['username']} 🤖" if is_bot_host else host['username']
+    print(f"👤 Ведущий: {host_label}")
 
     if "used_situations" not in st:
         st["used_situations"] = []
@@ -181,15 +191,14 @@ async def _start_round(bot: Bot, chat_id: int):
     available_situations = [s for s in all_situations if s not in st["used_situations"]]
     
     if not available_situations:
-        print("♻️ Все ситуации использованы! Сброс использованных ситуаций.")
+        print("♻️ Все ситуации использованы! Сброс.")
         st["used_situations"] = []
         available_situations = all_situations
     
     st["current_situation"] = decks.get_random_from_list(available_situations)
     st["used_situations"].append(st["current_situation"])
     
-    print(f"🎲 Выбрана ситуация: {st['current_situation']}")
-    print(f"📊 Использовано ситуаций: {len(st['used_situations'])}/{len(all_situations)}")
+    print(f"🎲 Ситуация: {st['current_situation']}")
     
     try:
         card_image = create_situation_card(st["current_situation"])
@@ -197,13 +206,13 @@ async def _start_round(bot: Bot, chat_id: int):
         await bot.send_photo(
             chat_id,
             photo=photo,
-            caption=f"🎮 **Новый раунд!**\nВедущий: {host['username']}"
+            caption=f"🎮 **Новый раунд!**\nВедущий: {host_label}"
         )
     except Exception as e:
         print(f"⚠️ Ошибка создания карточки: {e}")
         await bot.send_message(
             chat_id,
-            f"🎮 **Новый раунд!**\nВедущий: {host['username']}\n\n📝 Ситуация:\n{st['current_situation']}"
+            f"🎮 **Новый раунд!**\nВедущий: {host_label}\n\n📝 Ситуация:\n{st['current_situation']}"
         )
 
     cards_in_use = set(st["used_answers"])
@@ -221,7 +230,7 @@ async def _start_round(bot: Bot, chat_id: int):
         cards_needed = 0
     
     if len(st["main_deck"]) < cards_needed:
-        print(f"⚠️ Карты закончились! Сброс used_answers. Было использовано: {len(st['used_answers'])}")
+        print(f"⚠️ Карты закончились! Сброс.")
         st["used_answers"].clear()
         
         cards_in_hands = set()
@@ -244,7 +253,7 @@ async def _start_round(bot: Bot, chat_id: int):
                 current_hand.append(new_card)
         
         st["hands"][uid] = current_hand
-        print(f"✅ {'Бот' if p.get('is_bot') else 'Игрок'} {p['username']}: {len(current_hand)} карт в руке")
+        print(f"✅ {'Бот' if p.get('is_bot') else 'Игрок'} {p['username']}: {len(current_hand)} карт")
 
     for p in st["players"]:
         uid = p["user_id"]
@@ -261,10 +270,10 @@ async def _start_round(bot: Bot, chat_id: int):
                 for i, card in enumerate(hand)
             ])
             try:
-                msg = f"📝 Ситуация:\n{st['current_situation']}\n\n🃏 Ваша рука ({len(hand)} карт).\nВыберите подходящий ответ:"
+                msg = f"📝 Ситуация:\n{st['current_situation']}\n\n🃏 Ваша рука ({len(hand)} карт).\nВыберите ответ:"
                 await bot.send_message(uid, msg, reply_markup=kb)
             except TelegramBadRequest:
-                await bot.send_message(chat_id, f"⚠️ Не могу написать игроку {p['username']}. Убедитесь, что бот запущен.")
+                await bot.send_message(chat_id, f"⚠️ Не могу написать игроку {p['username']}.")
 
 async def _bot_auto_answer(bot: Bot, chat_id: int, bot_player_data: dict, situation: str, hand: list):
     """Автоматический ответ бота"""
@@ -305,97 +314,123 @@ async def _check_all_answered(bot: Bot, chat_id: int):
     if not st:
         return
     
-    host_id = st["players"][st["host_idx"]]["user_id"]
+    host = st["players"][st["host_idx"]]
+    host_id = host["user_id"]
     need = len(st["players"]) - 1
     
     if len(st["answers"]) >= need:
+        # Перемешиваем ответы для анонимности
         ordered = [(u, st["answers"][u]["card"]) for u in st["answers"]]
+        
+        # Сохраняем оригинальный порядок с авторами
+        st["answers_with_authors"] = ordered.copy()
+        
+        # Перемешиваем ответы
+        shuffled_answers = [(u, card) for u, card in ordered]
+        random.shuffle(shuffled_answers)
+        
+        # Сохраняем перемешанный порядок
+        st["shuffled_answers"] = shuffled_answers
+        
+        # Формируем список БЕЗ имён
         lines, buttons = [], []
-        for i, (u2, ans) in enumerate(ordered, 1):
-            player_data = next(p for p in st["players"] if p["user_id"] == u2)
-            name = player_data["username"]
-            bot_mark = " 🤖" if player_data.get("is_bot", False) else ""
-            lines.append(f"{i}. **{name}{bot_mark}** — _{ans}_")
-            buttons.append([InlineKeyboardButton(text=f"{i}. {name}", callback_data=f"pick:{chat_id}:{i-1}")])
+        for i, (uid, ans) in enumerate(shuffled_answers, 1):
+            lines.append(f"{i}. _{ans}_")
+            buttons.append([InlineKeyboardButton(
+                text=f"{i}. Выбрать этот ответ", 
+                callback_data=f"pick:{chat_id}:{i-1}"
+            )])
+        
+        host_mark = " 🤖" if host.get("is_bot", False) else ""
         
         await bot.send_message(
             chat_id, 
-            "📋 **Ответы игроков:**\n\n" + "\n".join(lines) + "\n\n👆 Ведущий, выберите лучший ответ:",
+            f"📋 **Ответы игроков (анонимно):**\n\n" + "\n".join(lines) + 
+            f"\n\n🎭 Авторы ответов скрыты для честной игры!\n"
+            f"👆 Ведущий {host['username']}{host_mark}, выберите лучший ответ:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
+        
+        # Если ведущий - бот, запускаем автовыбор
+        if host.get("is_bot", False):
+            asyncio.create_task(_bot_host_choose_winner(bot, chat_id))
 
-@router.callback_query(F.data.startswith("ans:"))
-async def on_answer(cb: CallbackQuery):
-    _, group_chat_id_str, uid_str, idx_str = cb.data.split(":")
-    group_chat_id, uid, idx = int(group_chat_id_str), int(uid_str), int(idx_str)
-    st = SESSIONS.get(group_chat_id)
+async def _bot_host_choose_winner(bot: Bot, chat_id: int):
+    """Бот-ведущий автоматически выбирает победителя"""
+    st = SESSIONS.get(chat_id)
     if not st:
-        await cb.answer("Игра не найдена.", show_alert=True)
         return
-
-    host_id = st["players"][st["host_idx"]]["user_id"]
-    if cb.from_user.id != uid or uid == host_id:
-        await cb.answer("Вы не можете отвечать.", show_alert=True)
+    
+    host = st["players"][st["host_idx"]]
+    if not host.get("is_bot", False):
         return
-
-    if uid in st["answers"]:
-        await cb.answer("Вы уже выбрали ответ!", show_alert=True)
+    
+    bot_instance = host.get("bot_instance")
+    if not bot_instance:
         return
+    
+    await asyncio.sleep(random.uniform(3, 6))
+    
+    shuffled_answers = st.get("shuffled_answers", [])
+    
+    # Формируем анонимный список для AI
+    players_answers = [(f"Вариант {i+1}", answer) for i, (uid, answer) in enumerate(shuffled_answers)]
+    
+    try:
+        winner_idx = await bot_instance.choose_winner(st["current_situation"], players_answers)
+        await _process_winner(bot, chat_id, winner_idx)
+    except Exception as e:
+        print(f"⚠️ Ошибка выбора победителя ботом: {e}")
+        winner_idx = random.randint(0, len(shuffled_answers) - 1)
+        await _process_winner(bot, chat_id, winner_idx)
 
-    hand = st["hands"].get(uid, [])
-    if idx < 0 or idx >= len(hand):
-        await cb.answer("Неверный выбор.", show_alert=True)
-        return
-
-    card = hand[idx]
-    st["answers"][uid] = {"card": card, "index": idx}
-    await cb.answer(f"✅ Вы выбрали: {card}")
-
-    await _check_all_answered(cb.bot, group_chat_id)
-
-@router.callback_query(F.data.startswith("pick:"))
-async def on_pick(cb: CallbackQuery):
-    _, group_chat_id_str, idx_str = cb.data.split(":")
-    group_chat_id, idx = int(group_chat_id_str), int(idx_str)
-    st = SESSIONS.get(group_chat_id)
+async def _process_winner(bot: Bot, chat_id: int, winner_idx: int):
+    """Обрабатывает выбор победителя"""
+    st = SESSIONS.get(chat_id)
     if not st:
-        await cb.answer("Игра не найдена.", show_alert=True)
         return
-
-    host_id = st["players"][st["host_idx"]]["user_id"]
-    if cb.from_user.id != host_id:
-        await cb.answer("Только ведущий может выбирать.", show_alert=True)
+    
+    shuffled_answers = st.get("shuffled_answers", [])
+    
+    if winner_idx < 0 or winner_idx >= len(shuffled_answers):
         return
-
-    ordered = [(u, st["answers"][u]["card"]) for u in st["answers"]]
-    if idx < 0 or idx >= len(ordered):
-        await cb.answer("Неверный индекс.", show_alert=True)
-        return
-
-    win_uid, win_ans = ordered[idx]
+    
+    # Получаем победителя из перемешанного списка
+    win_uid, win_ans = shuffled_answers[winner_idx]
+    
     win_player_data = next(p for p in st["players"] if p["user_id"] == win_uid)
     win_name = win_player_data["username"]
     bot_mark = " 🤖" if win_player_data.get("is_bot", False) else ""
+    
+    host = st["players"][st["host_idx"]]
+    host_mark = " 🤖" if host.get("is_bot", False) else ""
 
     st["scores"][win_uid] = st["scores"].get(win_uid, 0) + 1
 
     for uid, answer_data in st["answers"].items():
         hand = st["hands"].get(uid, [])
         card = answer_data["card"]
-        
         if card in hand:
             hand.remove(card)
-        
         st["used_answers"].append(card)
         st["hands"][uid] = hand
-
-    try:
-        await cb.message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest:
-        pass
     
-    await cb.message.edit_text(
-        f"🏆 **Победитель раунда:** {win_name}{bot_mark}\n💬 **Ответ:** _{win_ans}_\n\n⭐ Очков: {st['scores'][win_uid]}"
+    # Показываем всех игроков и их ответы после выбора
+    reveal_lines = ["🎭 **Раскрытие ответов:**\n"]
+    for uid, answer in shuffled_answers:
+        player_data = next(p for p in st["players"] if p["user_id"] == uid)
+        player_mark = " 🤖" if player_data.get("is_bot", False) else ""
+        winner_emoji = "🏆 " if uid == win_uid else "▪️ "
+        reveal_lines.append(f"{winner_emoji}**{player_data['username']}{player_mark}:** _{answer}_")
+    
+    await bot.send_message(chat_id, "\n".join(reveal_lines))
+    
+    await bot.send_message(
+        chat_id,
+        f"🏆 **Победитель раунда:** {win_name}{bot_mark}\n"
+        f"👤 **Выбрал:** {host['username']}{host_mark}\n"
+        f"💬 **Победный ответ:** _{win_ans}_\n\n"
+        f"⭐ Очков: {st['scores'][win_uid]}"
     )
 
     image_result, joke = await generate_card_content(st["current_situation"], win_ans)
@@ -404,30 +439,6 @@ async def on_pick(cb: CallbackQuery):
         try:
             if image_result.startswith('temp_image_') or os.path.isfile(image_result):
                 photo = FSInputFile(image_result)
-                await cb.bot.send_photo(
-                    group_chat_id, 
-                    photo=photo,
-                    caption=f"😄 {joke or ''}"
-                )
+                await bot.send_photo(chat_id, photo=photo, caption=f"😄 {joke or ''}")
                 try:
-                    os.remove(image_result)
-                    print(f"🗑️ Временный файл удален: {image_result}")
-                except Exception as e:
-                    print(f"⚠️ Не удалось удалить файл: {e}")
-            else:
-                await cb.bot.send_photo(group_chat_id, image_result, caption=f"😄 {joke or ''}")
-        except Exception as e:
-            print(f"⚠️ Ошибка отправки изображения: {e}")
-            await cb.bot.send_message(group_chat_id, f"😄 **Шутка:** {joke or '—'}")
-    else:
-        await cb.bot.send_message(group_chat_id, f"😄 **Шутка:** {joke or '—'}")
-
-    sorted_players = sorted(st["players"], key=lambda p: st["scores"].get(p["user_id"], 0), reverse=True)
-    stats_lines = ["📊 **Текущий счёт:**"]
-    for i, p in enumerate(sorted_players, 1):
-        score = st["scores"].get(p["user_id"], 0)
-        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "▪️"
-        bot_mark = " 🤖" if p.get("is_bot", False) else ""
-        stats_lines.append(f"{medal} {p['username']}{bot_mark}: {score}")
-    
-    await cb.bot.send_message(group_chat_id, "\n".join(stats_lines) + "\n\n✅ Раунд завершён.", reply_markup=main_menu())
+                    os.remove(
