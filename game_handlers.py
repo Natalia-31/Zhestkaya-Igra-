@@ -325,21 +325,25 @@ async def _check_all_answered(bot: Bot, chat_id: int):
         random.shuffle(shuffled_answers)
         st["shuffled_answers"] = shuffled_answers
         
-        lines, buttons = [], []
+        # УЛУЧШЕНО: Ответы теперь НА КНОПКАХ
+        buttons = []
         for i, (uid, ans) in enumerate(shuffled_answers, 1):
-            lines.append(f"{i}. _{ans}_")
+            # Обрезаем длинные ответы для кнопки (максимум 64 символа)
+            button_text = ans if len(ans) <= 60 else ans[:57] + "..."
             buttons.append([InlineKeyboardButton(
-                text=f"{i}. Выбрать этот ответ", 
+                text=f"{i}. {button_text}", 
                 callback_data=f"pick:{chat_id}:{i-1}"
             )])
         
         host_mark = " 🤖" if host.get("is_bot", False) else ""
         
+        # Упрощённое сообщение без списка ответов
         await bot.send_message(
             chat_id, 
-            f"📋 **Ответы игроков (анонимно):**\n\n" + "\n".join(lines) + 
-            f"\n\n🎭 Авторы ответов скрыты для честной игры!\n"
-            f"👆 Ведущий {host['username']}{host_mark}, выберите лучший ответ:",
+            f"📋 **Все ответы получены!**\n\n"
+            f"🎭 Авторы ответов скрыты для честной игры\n"
+            f"👤 Ведущий: {host['username']}{host_mark}\n\n"
+            f"👇 Выберите лучший ответ, нажав на кнопку:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
         
@@ -403,14 +407,24 @@ async def _process_winner(bot: Bot, chat_id: int, winner_idx: int):
         st["used_answers"].append(card)
         st["hands"][uid] = hand
     
+    # УЛУЧШЕНО: Красивое раскрытие с разделителями
     reveal_lines = ["🎭 **Раскрытие ответов:**\n"]
-    for uid, answer in shuffled_answers:
+    for i, (uid, answer) in enumerate(shuffled_answers, 1):
         player_data = next(p for p in st["players"] if p["user_id"] == uid)
         player_mark = " 🤖" if player_data.get("is_bot", False) else ""
-        winner_emoji = "🏆 " if uid == win_uid else "▪️ "
-        reveal_lines.append(f"{winner_emoji}**{player_data['username']}{player_mark}:** _{answer}_")
+        
+        if uid == win_uid:
+            reveal_lines.append(
+                f"🏆 **Вариант {i}:** _{answer}_\n"
+                f"   👤 Автор: **{player_data['username']}{player_mark}** ✨"
+            )
+        else:
+            reveal_lines.append(
+                f"▪️ **Вариант {i}:** _{answer}_\n"
+                f"   👤 Автор: {player_data['username']}{player_mark}"
+            )
     
-    await bot.send_message(chat_id, "\n".join(reveal_lines))
+    await bot.send_message(chat_id, "\n\n".join(reveal_lines))
     
     await bot.send_message(
         chat_id,
