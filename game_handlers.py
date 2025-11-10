@@ -2,7 +2,7 @@
 import asyncio
 import os
 import random
-from typing import Dict, Any
+from typing import Dict, Any, List
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, FSInputFile
 from aiogram.filters import Command, CommandStart
@@ -14,6 +14,15 @@ from card_generator import create_situation_card
 router = Router()
 SESSIONS: Dict[int, Dict[str, Any]] = {}
 
+# Глобальные переменные для ботов (будут установлены при инициализации)
+BOT_PLAYERS: List = []
+
+def set_bot_players(bot_players: list):
+    """Устанавливает список ботов-игроков"""
+    global BOT_PLAYERS
+    BOT_PLAYERS = bot_players
+    print(f"✅ Зарегистрировано ботов: {len(BOT_PLAYERS)}")
+
 def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Начать игру", callback_data="ui_new_game")],
@@ -24,7 +33,22 @@ def main_menu() -> InlineKeyboardMarkup:
 
 @router.message(CommandStart())
 async def cmd_start(m: Message):
-    await m.answer("Жесткая Игра. Используйте меню.", reply_markup=main_menu())
+    # Приветственное видео
+    WELCOME_VIDEO_PATH = "assets/welcome.mp4"
+    try:
+        if os.path.exists(WELCOME_VIDEO_PATH):
+            video = FSInputFile(WELCOME_VIDEO_PATH)
+            await m.bot.send_video(
+                chat_id=m.chat.id,
+                video=video,
+                caption="🎮 Добро пожаловать в Жесткую Игру!\n\n"
+                        "В игре участвуют 2 бота-игрока: 🤖 БотИгрок1 и 🤖 БотИгрок2"
+            )
+    except Exception as e:
+        print(f"⚠️ Ошибка отправки видео: {e}")
+    
+    # Меню с кнопками
+    await m.answer("Используйте меню для управления игрой:", reply_markup=main_menu())
 
 @router.message(Command("new_game"))
 async def cmd_new_game(m: Message):
@@ -80,20 +104,17 @@ async def _create_game(chat_id: int, host_id: int, host_name: str, bot: Bot):
         "used_situations": []
     }
     
-    # Получаем ботов из workflow_data
-    bot_players = bot.workflow_data.get("bot_players", [])
-    
     # Добавляем ботов как игроков
-    for bot_player in bot_players:
+    for bot_player in BOT_PLAYERS:
         SESSIONS[chat_id]["players"].append({
-            "user_id": bot_player.bot_id,  # Используем bot_id как уникальный ID
+            "user_id": bot_player.bot_id,
             "username": bot_player.name,
-            "is_bot": True,  # Флаг что это бот
-            "bot_instance": bot_player  # Сохраняем ссылку на экземпляр бота
+            "is_bot": True,
+            "bot_instance": bot_player
         })
         SESSIONS[chat_id]["scores"][bot_player.bot_id] = 0
     
-    print(f"🤖 Добавлено ботов: {len(bot_players)}")
+    print(f"🤖 Добавлено ботов: {len(BOT_PLAYERS)}")
 
 async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedback: Message):
     st = SESSIONS.get(chat_id)
@@ -101,7 +122,6 @@ async def _join_flow(chat_id: int, user_id: int, user_name: str, bot: Bot, feedb
         await feedback.answer("Сначала нажмите «Начать игру».", reply_markup=main_menu())
         return
     
-    # Проверяем, не бот ли это
     if user_id not in [p["user_id"] for p in st["players"]]:
         try:
             await bot.send_message(user_id, "Вы присоединились к игре! Ожидайте начала раунда.")
@@ -154,7 +174,6 @@ async def _start_round(bot: Bot, chat_id: int):
     host = st["players"][st["host_idx"]]
     host_id = host["user_id"]
 
-    # Получение ситуации
     if "used_situations" not in st:
         st["used_situations"] = []
     
@@ -170,8 +189,8 @@ async def _start_round(bot: Bot, chat_id: int):
     st["used_situations"].append(st["current_situation"])
     
     print(f"🎲 Выбрана ситуация: {st['current_situation']}")
+    print(f"📊 Использовано ситуаций: {len(st['used_situations'])}/{len(all_situations)}")
     
-    # Отправка карточки
     try:
         card_image = create_situation_card(st["current_situation"])
         photo = BufferedInputFile(card_image.read(), filename='situation.png')
@@ -187,7 +206,6 @@ async def _start_round(bot: Bot, chat_id: int):
             f"🎮 **Новый раунд!**\nВедущий: {host['username']}\n\n📝 Ситуация:\n{st['current_situation']}"
         )
 
-    # Подготовка колоды
     cards_in_use = set(st["used_answers"])
     for uid, hand in st["hands"].items():
         cards_in_use.update(hand)
@@ -203,15 +221,16 @@ async def _start_round(bot: Bot, chat_id: int):
         cards_needed = 0
     
     if len(st["main_deck"]) < cards_needed:
-        print(f"⚠️ Карты закончились! Сброс used_answers.")
+        print(f"⚠️ Карты закончились! Сброс used_answers. Было использовано: {len(st['used_answers'])}")
         st["used_answers"].clear()
+        
         cards_in_hands = set()
         for uid, hand in st["hands"].items():
             cards_in_hands.update(hand)
+        
         full_deck = decks.get_new_shuffled_answers_deck()
         st["main_deck"] = [c for c in full_deck if c not in cards_in_hands]
 
-    # Раздача карт
     for p in st["players"]:
         uid = p["user_id"]
         if uid == host_id:
@@ -225,9 +244,8 @@ async def _start_round(bot: Bot, chat_id: int):
                 current_hand.append(new_card)
         
         st["hands"][uid] = current_hand
-        print(f"✅ {'Бот' if p.get('is_bot') else 'Игрок'} {p['username']}: {len(current_hand)} карт")
+        print(f"✅ {'Бот' if p.get('is_bot') else 'Игрок'} {p['username']}: {len(current_hand)} карт в руке")
 
-    # Отправка карт игрокам и автоответы ботов
     for p in st["players"]:
         uid = p["user_id"]
         if uid == host_id:
@@ -235,11 +253,9 @@ async def _start_round(bot: Bot, chat_id: int):
         
         hand = st["hands"].get(uid, [])
         
-        # Если это бот - автоматически выбираем ответ
         if p.get("is_bot", False):
             asyncio.create_task(_bot_auto_answer(bot, chat_id, p, st["current_situation"], hand))
         else:
-            # Обычный игрок - отправляем карты
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=card, callback_data=f"ans:{chat_id}:{uid}:{i}")]
                 for i, card in enumerate(hand)
@@ -248,11 +264,10 @@ async def _start_round(bot: Bot, chat_id: int):
                 msg = f"📝 Ситуация:\n{st['current_situation']}\n\n🃏 Ваша рука ({len(hand)} карт).\nВыберите подходящий ответ:"
                 await bot.send_message(uid, msg, reply_markup=kb)
             except TelegramBadRequest:
-                await bot.send_message(chat_id, f"⚠️ Не могу написать игроку {p['username']}.")
+                await bot.send_message(chat_id, f"⚠️ Не могу написать игроку {p['username']}. Убедитесь, что бот запущен.")
 
 async def _bot_auto_answer(bot: Bot, chat_id: int, bot_player_data: dict, situation: str, hand: list):
     """Автоматический ответ бота"""
-    # Небольшая задержка для реалистичности
     await asyncio.sleep(random.uniform(2, 5))
     
     st = SESSIONS.get(chat_id)
@@ -261,28 +276,23 @@ async def _bot_auto_answer(bot: Bot, chat_id: int, bot_player_data: dict, situat
     
     uid = bot_player_data["user_id"]
     
-    # Проверяем, не ответил ли уже
     if uid in st["answers"]:
         return
     
-    # Получаем экземпляр бота
     bot_instance = bot_player_data.get("bot_instance")
     
     if bot_instance and hand:
         try:
-            # Используем AI для выбора ответа
             selected_answer = await bot_instance.generate_answer(situation, hand)
             idx = hand.index(selected_answer)
             
             st["answers"][uid] = {"card": selected_answer, "index": idx}
             print(f"🤖 Бот {bot_player_data['username']} выбрал: {selected_answer}")
             
-            # Проверяем, все ли ответили
             await _check_all_answered(bot, chat_id)
             
         except Exception as e:
             print(f"⚠️ Ошибка ответа бота: {e}")
-            # Запасной вариант - случайный выбор
             if hand:
                 selected_answer = random.choice(hand)
                 idx = hand.index(selected_answer)
@@ -341,7 +351,6 @@ async def on_answer(cb: CallbackQuery):
     st["answers"][uid] = {"card": card, "index": idx}
     await cb.answer(f"✅ Вы выбрали: {card}")
 
-    # Проверяем, все ли ответили
     await _check_all_answered(cb.bot, group_chat_id)
 
 @router.callback_query(F.data.startswith("pick:"))
@@ -373,8 +382,10 @@ async def on_pick(cb: CallbackQuery):
     for uid, answer_data in st["answers"].items():
         hand = st["hands"].get(uid, [])
         card = answer_data["card"]
+        
         if card in hand:
             hand.remove(card)
+        
         st["used_answers"].append(card)
         st["hands"][uid] = hand
 
@@ -393,9 +404,14 @@ async def on_pick(cb: CallbackQuery):
         try:
             if image_result.startswith('temp_image_') or os.path.isfile(image_result):
                 photo = FSInputFile(image_result)
-                await cb.bot.send_photo(group_chat_id, photo=photo, caption=f"😄 {joke or ''}")
+                await cb.bot.send_photo(
+                    group_chat_id, 
+                    photo=photo,
+                    caption=f"😄 {joke or ''}"
+                )
                 try:
                     os.remove(image_result)
+                    print(f"🗑️ Временный файл удален: {image_result}")
                 except Exception as e:
                     print(f"⚠️ Не удалось удалить файл: {e}")
             else:
