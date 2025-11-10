@@ -14,12 +14,10 @@ print("answers loaded:", len(game_utils.decks.answers))
 
 import logging
 from aiogram import Bot, Dispatcher
-from aiogram.filters import CommandStart
-from aiogram.types import Message, FSInputFile
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 
-from handlers.game_handlers import router as game_router
+from handlers.game_handlers import router as game_router, set_bot_players
 
 import google.generativeai as genai
 
@@ -28,9 +26,6 @@ logging.basicConfig(level=logging.INFO)
 # Переменные окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# Путь к приветственному видео
-WELCOME_VIDEO_PATH = "assets/welcome.mp4"
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -92,43 +87,21 @@ class BotPlayer:
 # Создаем двух ботов-игроков
 bot_player_1 = BotPlayer("🤖 БотИгрок1", bot_id=1)
 bot_player_2 = BotPlayer("🤖 БотИгрок2", bot_id=2)
+
+# Регистрируем ботов в handlers
+set_bot_players([bot_player_1, bot_player_2])
 # ============================================================
 
 
 async def generate_gemini_response(text: str) -> str:
     """Генерирует ответ с помощью Gemini AI"""
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash-lite-preview-09-2025")
+        model = genai.GenerativeModel("gemini-1.5-flash")
         response = await asyncio.to_thread(model.generate_content, text)
         return response.text
     except Exception as e:
         logging.error(f"Ошибка генерации ответа Gemini: {e}")
         return "Извините, произошла ошибка при генерации ответа."
-
-
-async def send_welcome_video(message: Message, bot: Bot):
-    """Отправляет приветственное видео при старте"""
-    try:
-        if os.path.exists(WELCOME_VIDEO_PATH):
-            video = FSInputFile(WELCOME_VIDEO_PATH)
-            await bot.send_video(
-                chat_id=message.chat.id,
-                video=video,
-                caption="🎮 Добро пожаловать в игру! Приятной игры!\n\n"
-                        "В игре с вами будут играть два бота: 🤖 БотИгрок1 и 🤖 БотИгрок2"
-            )
-        else:
-            await message.answer(
-                "🎮 Добро пожаловать в игру!\n\n"
-                "В игре с вами будут играть два бота: 🤖 БотИгрок1 и 🤖 БотИгрок2"
-            )
-            logging.warning(f"Видео не найдено по пути: {WELCOME_VIDEO_PATH}")
-    except Exception as e:
-        logging.error(f"Ошибка при отправке приветственного видео: {e}")
-        await message.answer(
-            "🎮 Добро пожаловать в игру!\n\n"
-            "В игре с вами будут играть два бота: 🤖 БотИгрок1 и 🤖 БотИгрок2"
-        )
 
 
 async def main():
@@ -140,14 +113,7 @@ async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=None))
     dp = Dispatcher(storage=MemoryStorage())
     
-    # Делаем ботов-игроков доступными для всех обработчиков
-    dp.workflow_data.update(bot_players=[bot_player_1, bot_player_2])
-    
-    # Регистрируем обработчик команды /start для приветственного видео
-    @dp.message(CommandStart())
-    async def cmd_start(message: Message):
-        await send_welcome_video(message, bot)
-    
+    # Подключаем роутер с игровыми обработчиками
     dp.include_router(game_router)
     
     logging.info("Бот запущен и готов к работе")
