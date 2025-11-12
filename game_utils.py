@@ -55,25 +55,63 @@ class DeckManager:
         self.base_dir = base or Path(__file__).resolve().parent
         self.sit_path = (self.base_dir / situations_file).resolve()
         self.ans_path = (self.base_dir / answers_file).resolve()
+        
+        print(f"📂 game_utils file: {Path(__file__).resolve()}")
+        print(f"📂 situations path: {self.sit_path}")
+        print(f"📂 answers path: {self.ans_path}")
+        
         self.situations: List[str] = self._load_list(self.sit_path, "situations")
         self.answers: List[str]    = self._load_list(self.ans_path, "answers")
+        
+        print(f"✅ situations loaded: {len(self.situations)}")
+        print(f"✅ answers loaded: {len(self.answers)}")
 
     def _load_list(self, file_path: Path, label: str) -> List[str]:
+        """
+        ИСПРАВЛЕННАЯ функция загрузки - поддерживает оба формата:
+        1. Простой массив: ["item1", "item2", ...]
+        2. Объект с ключом: {"answers": ["item1", "item2", ...]}
+        """
         for enc in ("utf-8-sig", "utf-8"):
             try:
                 data = json.loads(file_path.read_text(encoding=enc))
-                if isinstance(data, list):
-                    seen, out = set(), []
-                    for x in data:
-                        if isinstance(x, str):
-                            x = x.strip()
-                            if x and x not in seen:
-                                seen.add(x)
-                                out.append(x)
-                    return out
-                return []
-            except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+                
+                # ИСПРАВЛЕНИЕ: поддержка как массива, так и объекта с ключом
+                if isinstance(data, dict):
+                    # Если это объект, берём значение по ключу label
+                    items = data.get(label, [])
+                elif isinstance(data, list):
+                    # Если это массив, используем напрямую
+                    items = data
+                else:
+                    print(f"⚠️ {label}: неизвестный формат данных")
+                    return []
+                
+                # Убираем дубликаты и пустые строки
+                seen, out = set(), []
+                for x in items:
+                    if isinstance(x, str):
+                        x = x.strip()
+                        if x and x not in seen:
+                            seen.add(x)
+                            out.append(x)
+                
+                print(f"✅ {label} parsed: {len(out)} items")
+                return out
+                
+            except FileNotFoundError:
+                print(f"❌ {label}: файл не найден - {file_path}")
                 continue
+            except json.JSONDecodeError as e:
+                print(f"❌ {label}: ошибка JSON - {e}")
+                continue
+            except UnicodeDecodeError as e:
+                print(f"❌ {label}: ошибка кодировки - {e}")
+                continue
+            except Exception as e:
+                print(f"❌ {label}: неожиданная ошибка - {e}")
+                continue
+        
         return []
 
     def get_random_situation(self) -> str:
